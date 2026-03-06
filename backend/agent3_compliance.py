@@ -11,7 +11,7 @@ class ComplianceAgent:
 
         violations = []
         rules_passed = 0
-        total_rules = 8
+        total_rules = 9
 
         # Track shifts
         shift_counts = {n["name"]:0 for n in nurses}
@@ -101,12 +101,11 @@ class ComplianceAgent:
                 if len(assigned) != len(set(assigned)):
                     violations.append(f"{day} {shift} contains duplicate nurse assignment")
 
+        violations = list(set(violations))
+        
         passed = len(violations)==0
 
-        unique_rules_broken = set(v.split()[0] for v in violations)
-        score = int(((total_rules - len(unique_rules_broken)) / total_rules) * 100)
-        if score<0:
-            score=0
+        score = max(0, int((1 - len(violations)/total_rules) * 100))
 
         return {
             "passed":passed,
