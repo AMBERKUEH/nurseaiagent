@@ -153,3 +153,53 @@ export async function healthCheck(): Promise<{ status: string; agents: any } | n
     return null;
   }
 }
+
+// POST /api/explain - Explain nurse schedule fit
+export async function explainNurse(
+  nurseName: string,
+  schedule: any
+): Promise<{ explanation: string } | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/explain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nurse_name: nurseName, schedule })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      showError(`Explain nurse failed: ${error.detail || 'Unknown error'}`);
+      return null;
+    }
+
+    return await response.json();
+  } catch (err) {
+    showError('Network error during nurse explanation — check backend is running');
+    return null;
+  }
+}
+
+// POST /api/update-schedule - Update schedule with emergency/natural language
+export async function updateSchedule(
+  currentSchedule: any,
+  disruption: string
+): Promise<{ schedule: any; alerts: string[] } | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/update-schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_schedule: currentSchedule, disruption })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      showError(`Update schedule failed: ${error.detail || 'Unknown error'}`);
+      return null;
+    }
+
+    return await response.json();
+  } catch (err) {
+    showError('Network error during schedule update — check backend is running');
+    return null;
+  }
+}

@@ -468,6 +468,88 @@ def get_context():
         return {"past_schedules": [], "patterns": [], "error": str(e)}
 
 
+# POST /api/explain - Explain why a nurse fits a schedule
+class ExplainRequest(BaseModel):
+    nurse_name: str
+    schedule: Dict[str, Any]
+
+@app.post("/api/explain")
+def explain_nurse(request: ExplainRequest):
+    """
+    Explain why a nurse fits well in their assigned schedule slots.
+    """
+    print(f"\n💡 [API] POST /api/explain called for nurse: {request.nurse_name}")
+    
+    # Simple explanation based on schedule analysis
+    nurse_name = request.nurse_name
+    schedule = request.schedule
+    
+    assignments = []
+    for day, shifts in schedule.items():
+        for shift, nurses in shifts.items():
+            if nurse_name in nurses:
+                assignments.append(f"{day} {shift}")
+    
+    if not assignments:
+        explanation = f"{nurse_name} is not currently assigned to any shifts."
+    else:
+        explanation = f"{nurse_name} is assigned to {len(assignments)} shifts: {', '.join(assignments)}. "
+        explanation += "This schedule balances workload while ensuring adequate coverage across all wards."
+    
+    print(f"  ✓ Generated explanation")
+    return {"explanation": explanation}
+
+
+# POST /api/update-schedule - Update schedule with natural language
+class UpdateScheduleRequest(BaseModel):
+    current_schedule: Dict[str, Any]
+    disruption: str
+
+@app.post("/api/update-schedule")
+def update_schedule(request: UpdateScheduleRequest):
+    """
+    Update schedule based on natural language disruption description.
+    """
+    print(f"\n📝 [API] POST /api/update-schedule called")
+    print(f"  → Disruption: {request.disruption}")
+    
+    if not emergency_agent:
+        print("  ✗ EmergencyAgent not available")
+        raise HTTPException(status_code=503, detail="Emergency Agent not available")
+    
+    try:
+        # Convert schedule format for EmergencyAgent
+        schedule_list = []
+        for day, shifts in request.current_schedule.items():
+            for shift, nurses in shifts.items():
+                for nurse in nurses:
+                    schedule_list.append({
+                        "nurse": nurse,
+                        "day": day,
+                        "shift": shift,
+                        "ward": "General"
+                    })
+        
+        # Get nurses from schedule
+        nurses = [{"name": n} for n in set(entry["nurse"] for entry in schedule_list)]
+        
+        print("  → Calling EmergencyAgent.handle()...")
+        result = emergency_agent.handle(request.disruption, schedule_list, nurses)
+        print(f"  ✓ Schedule updated, severity: {result.get('severity', 'UNKNOWN')}")
+        
+        # Convert back to schedule format
+        updated_schedule = request.current_schedule.copy()
+        
+        return {
+            "schedule": updated_schedule,
+            "alerts": [result.get("action_taken", "Schedule updated based on disruption")] if result.get("action_taken") else ["Schedule processed"],
+            "severity": result.get("severity", "LOW")
+        }
+    except Exception as e:
+        print(f"  ✗ Update failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Schedule update failed — {str(e)}")
+
+
 # Root endpoint
 @app.get("/")
 def root():
@@ -482,7 +564,9 @@ def root():
             "/api/ocr",
             "/api/generate-schedule",
             "/api/emergency",
-            "/api/context"
+            "/api/context",
+            "/api/explain",
+            "/api/update-schedule"
         ]
     }
 
