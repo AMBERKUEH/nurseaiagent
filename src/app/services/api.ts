@@ -4,13 +4,13 @@ const showToast = (message: string, type: "error" | "success" = "error") => {
   console.error(`[${type.toUpperCase()}] ${message}`);
 };
 
-// POST /upload - Upload PDF file
-export async function uploadPDF(file: File): Promise<{ nurses: any[]; count: number } | null> {
+// POST /api/ocr - Upload PDF file and extract nurses
+export async function uploadPDF(file: File): Promise<{ nurses: any[]; count: number; warning?: string } | null> {
   const formData = new FormData();
   formData.append("file", file);
 
   try {
-    const response = await fetch(`${API_BASE}/upload`, {
+    const response = await fetch(`${API_BASE}/api/ocr`, {
       method: "POST",
       body: formData,
     });
@@ -21,26 +21,34 @@ export async function uploadPDF(file: File): Promise<{ nurses: any[]; count: num
       return null;
     }
 
-    return await response.json();
+    const data = await response.json();
+    return {
+      nurses: data.nurses,
+      count: data.count || data.nurses.length,
+      warning: data.warning
+    };
   } catch (err) {
     showToast("Network error during upload");
     return null;
   }
 }
 
-// POST /generate - Generate schedule
-export async function generateSchedule(): Promise<{
+// POST /api/generate-schedule - Generate schedule with nurses and rules
+export async function generateSchedule(nurses?: any[], rules?: any): Promise<{
   schedule: any;
-  compliance: any;
-  forecast: any;
-  retry_count: number;
-  bright_data: any;
-  memory_insights: string[];
+  staffing_requirements: any;
+  compliance: { status: string; reasons: string[]; score: number };
+  alerts: string[];
 } | null> {
   try {
-    const response = await fetch(`${API_BASE}/generate`, {
+    const body: any = {};
+    if (nurses) body.nurses = nurses;
+    if (rules) body.rules = rules;
+
+    const response = await fetch(`${API_BASE}/api/generate-schedule`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {

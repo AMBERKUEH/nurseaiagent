@@ -1,23 +1,85 @@
 import { Upload, FileText, Brain, CheckCircle, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
-import { useState, useRef } from 'react';
-import { uploadPDF } from '../services/api';
+import { useState, useRef, useEffect } from 'react';
+import { uploadPDF, generateSchedule } from '../services/api';
+
+// Default nurses for demo
+const DEFAULT_NURSES = [
+  { name: "Zhang Wei", skill: "N3", ward: "ICU", unavailable_days: ["Tuesday"] },
+  { name: "Li Na", skill: "N2", ward: "General", unavailable_days: [] },
+  { name: "Wang Fang", skill: "N4", ward: "ER", unavailable_days: ["Friday"] },
+  { name: "Chen Jing", skill: "N2", ward: "Pediatrics", unavailable_days: ["Wednesday"] },
+  { name: "Liu Yang", skill: "N3", ward: "ICU", unavailable_days: [] }
+];
+
+// Default rules
+const DEFAULT_RULES = {
+  max_shifts_per_week: 5,
+  min_rest_hours: 12,
+  ward_skill_requirements: {
+    ICU: "N3",
+    ER: "N3",
+    General: "N2",
+    Pediatrics: "N2"
+  }
+};
+
+// Badge states
+interface BadgeState {
+  ocr: 'idle' | 'loading' | 'done';
+  scheduling: 'idle' | 'loading' | 'done';
+  compliance: 'idle' | 'loading' | 'done';
+}
 
 export default function UploadPage() {
   const navigate = useNavigate();
   const [isDragging, setIsDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [extractedNurses, setExtractedNurses] = useState<any[] | null>(null);
+  const [badgeStates, setBadgeStates] = useState<BadgeState>({
+    ocr: 'idle',
+    scheduling: 'idle',
+    compliance: 'idle'
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileSelect = (selectedFile: File) => {
+  const handleFileSelect = async (selectedFile: File) => {
     if (selectedFile.type !== 'application/pdf') {
       setError('Please upload a PDF file only');
       return;
     }
+    
     setFile(selectedFile);
     setError(null);
+    setSuccess(null);
+    setExtractedNurses(null);
+    
+    // Auto-start OCR extraction
+    await extractPDF(selectedFile);
+  };
+
+  const extractPDF = async (pdfFile: File) => {
+    setIsUploading(true);
+    setSuccess('Extracting data from PDF...');
+    
+    const result = await uploadPDF(pdfFile);
+    
+    if (result) {
+      setExtractedNurses(result.nurses);
+      setSuccess(`✅ PDF extracted successfully — ${result.count} nurses found`);
+      if (result.warning) {
+        console.warn(result.warning);
+      }
+    } else {
+      setError('Failed to extract data from PDF. Please try again.');
+      setSuccess(null);
+    }
+    
+    setIsUploading(false);
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -37,22 +99,70 @@ export default function UploadPage() {
     }
   };
 
-  const handleGenerate = async () => {
-    if (!file) return;
+  const animateBadges = async () => {
+    // Reset badges
+    setBadgeStates({ ocr: 'loading', scheduling: 'idle', compliance: 'idle' });
     
-    setIsUploading(true);
+    // OCR badge (1 second)
+    await new Promise(r => setTimeout(r, 1000));
+    setBadgeStates(prev => ({ ...prev, ocr: 'done', scheduling: 'loading' }));
+    
+    // Scheduling badge (2 seconds)
+    await new Promise(r => setTimeout(r, 2000));
+    setBadgeStates(prev => ({ ...prev, scheduling: 'done', compliance: 'loading' }));
+    
+    // Compliance badge (1 second)
+    await new Promise(r => setTimeout(r, 1000));
+    setBadgeStates(prev => ({ ...prev, compliance: 'done' }));
+  };
+
+  const handleGenerate = async () => {
+    setIsGenerating(true);
     setError(null);
     
-    const result = await uploadPDF(file);
+    // Start badge animation
+    await animateBadges();
+    
+    // Use extracted nurses or default
+    const nursesToUse = extractedNurses || DEFAULT_NURSES;
+    
+    // Call generate schedule API
+    const result = await generateSchedule(nursesToUse, DEFAULT_RULES);
     
     if (result) {
-      localStorage.setItem('nurses', JSON.stringify(result.nurses));
-      navigate('/processing');
+      // Store result in localStorage for dashboard
+      localStorage.setItem('scheduleResult', JSON.stringify(result));
+      localStorage.setItem('nurses', JSON.stringify(nursesToUse));
+      
+      // Navigate to dashboard
+      navigate('/dashboard');
     } else {
-      setError('Failed to upload PDF. Please try again.');
+      setError('Failed to generate schedule. Please try again.');
+      setIsGenerating(false);
     }
+  };
+
+  const handleDemoClick = async () => {
+    // Auto-fill with demo data
+    setExtractedNurses(DEFAULT_NURSES);
+    setSuccess('✅ Demo data loaded — 5 nurses ready');
     
-    setIsUploading(false);
+    // Wait 0.5 seconds then trigger generate
+    setTimeout(async () => {
+      await handleGenerate();
+    }, 500);
+  };
+
+  const getBadgeStyle = (state: 'idle' | 'loading' | 'done') => {
+    if (state === 'done') {
+      return { backgroundColor: '#1A3A2F', border: '1px solid #00E5A0' };
+    }
+    return { backgroundColor: '#1A2235' };
+  };
+
+  const getBadgeTextColor = (state: 'idle' | 'loading' | 'done') => {
+    if (state === 'done') return '#00E5A0';
+    return '#00D4FF';
   };
 
   return (
@@ -104,6 +214,19 @@ export default function UploadPage() {
           </div>
         )}
 
+        {/* Success Message */}
+        {success && (
+          <div 
+            className="mb-4 p-3 rounded-lg"
+            style={{ 
+              backgroundColor: 'rgba(0, 229, 160, 0.1)',
+              border: '1px solid #00E5A0'
+            }}
+          >
+            <p style={{ fontSize: '14px', color: '#00E5A0' }}>{success}</p>
+          </div>
+        )}
+
         {/* Hidden File Input */}
         <input
           ref={fileInputRef}
@@ -120,7 +243,9 @@ export default function UploadPage() {
             width: '480px',
             height: '200px',
             backgroundColor: '#111827',
-            border: `2px dashed ${isDragging ? '#00D4FF' : file ? '#00E5A0' : 'rgba(0, 212, 255, 0.4)'}`,
+            border: extractedNurses 
+              ? '2px solid #00E5A0'  // Solid green when extracted
+              : `2px dashed ${isDragging ? '#00D4FF' : file ? '#00E5A0' : 'rgba(0, 212, 255, 0.4)'}`,
             borderRadius: '12px',
           }}
           onDragOver={(e) => {
@@ -131,7 +256,13 @@ export default function UploadPage() {
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
         >
-          <Upload size={32} style={{ color: file ? '#00E5A0' : '#00D4FF', marginBottom: '12px' }} />
+          <Upload 
+            size={32} 
+            style={{ 
+              color: extractedNurses ? '#00E5A0' : file ? '#00E5A0' : '#00D4FF', 
+              marginBottom: '12px' 
+            }} 
+          />
           <p style={{ fontSize: '16px', color: '#FFFFFF', marginBottom: '4px' }}>
             {file ? file.name : 'Drop your PDF here'}
           </p>
@@ -143,32 +274,50 @@ export default function UploadPage() {
         {/* Feature Pills */}
         <div className="flex gap-3 mb-8">
           <div 
-            className="flex items-center gap-2 px-4 py-2 rounded-lg"
-            style={{ backgroundColor: '#1A2235' }}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
+            style={getBadgeStyle(badgeStates.ocr)}
           >
-            <FileText size={14} style={{ color: '#00D4FF' }} />
-            <span style={{ fontSize: '13px', color: '#00D4FF' }}>📋 OCR Extraction</span>
+            {badgeStates.ocr === 'loading' ? (
+              <Loader2 size={14} className="animate-spin" style={{ color: '#00D4FF' }} />
+            ) : (
+              <FileText size={14} style={{ color: getBadgeTextColor(badgeStates.ocr) }} />
+            )}
+            <span style={{ fontSize: '13px', color: getBadgeTextColor(badgeStates.ocr) }}>
+              {badgeStates.ocr === 'done' ? '✅ OCR Extraction' : '📄 OCR Extraction'}
+            </span>
           </div>
           <div 
-            className="flex items-center gap-2 px-4 py-2 rounded-lg"
-            style={{ backgroundColor: '#1A2235' }}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
+            style={getBadgeStyle(badgeStates.scheduling)}
           >
-            <Brain size={14} style={{ color: '#00D4FF' }} />
-            <span style={{ fontSize: '13px', color: '#00D4FF' }}>🧠 AI Scheduling</span>
+            {badgeStates.scheduling === 'loading' ? (
+              <Loader2 size={14} className="animate-spin" style={{ color: '#00D4FF' }} />
+            ) : (
+              <Brain size={14} style={{ color: getBadgeTextColor(badgeStates.scheduling) }} />
+            )}
+            <span style={{ fontSize: '13px', color: getBadgeTextColor(badgeStates.scheduling) }}>
+              {badgeStates.scheduling === 'done' ? '✅ AI Scheduling' : '🤖 AI Scheduling'}
+            </span>
           </div>
           <div 
-            className="flex items-center gap-2 px-4 py-2 rounded-lg"
-            style={{ backgroundColor: '#1A2235' }}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
+            style={getBadgeStyle(badgeStates.compliance)}
           >
-            <CheckCircle size={14} style={{ color: '#00D4FF' }} />
-            <span style={{ fontSize: '13px', color: '#00D4FF' }}>✅ Compliance Check</span>
+            {badgeStates.compliance === 'loading' ? (
+              <Loader2 size={14} className="animate-spin" style={{ color: '#00D4FF' }} />
+            ) : (
+              <CheckCircle size={14} style={{ color: getBadgeTextColor(badgeStates.compliance) }} />
+            )}
+            <span style={{ fontSize: '13px', color: getBadgeTextColor(badgeStates.compliance) }}>
+              {badgeStates.compliance === 'done' ? '✅ Compliance Check' : '✅ Compliance Check'}
+            </span>
           </div>
         </div>
 
         {/* Generate Button */}
         <button
           onClick={handleGenerate}
-          disabled={!file || isUploading}
+          disabled={isGenerating}
           className="w-full transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           style={{
             width: '480px',
@@ -181,29 +330,30 @@ export default function UploadPage() {
             letterSpacing: '1px',
             borderRadius: '8px',
             border: 'none',
-            cursor: file && !isUploading ? 'pointer' : 'not-allowed',
+            cursor: isGenerating ? 'not-allowed' : 'pointer',
           }}
         >
-          {isUploading ? (
+          {isGenerating ? (
             <>
               <Loader2 size={18} className="animate-spin" />
-              Uploading...
+              Generating...
             </>
           ) : (
             'GENERATE SCHEDULE'
           )}
         </button>
 
-        {/* Demo Note */}
+        {/* Demo Hint Bar */}
         <div 
-          className="mt-4 p-3 rounded-lg text-center"
+          className="mt-4 p-3 rounded-lg text-center cursor-pointer transition-all hover:opacity-80"
           style={{ 
             backgroundColor: 'rgba(0, 212, 255, 0.1)',
             border: '1px solid rgba(0, 212, 255, 0.3)'
           }}
+          onClick={handleDemoClick}
         >
           <p style={{ fontSize: '12px', color: '#00D4FF' }}>
-            💡 Upload a PDF with nurse roster data to get started
+            💡 This is a demo — click anywhere to see the AI in action
           </p>
         </div>
 

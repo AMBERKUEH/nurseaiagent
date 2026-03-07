@@ -42,7 +42,7 @@ export default function Dashboard() {
     const loadData = () => {
       try {
         const nursesData = localStorage.getItem('nurses');
-        const scheduleDataStr = localStorage.getItem('scheduleData');
+        const scheduleResultStr = localStorage.getItem('scheduleResult');
 
         if (nursesData) {
           setNurses(JSON.parse(nursesData));
@@ -50,8 +50,21 @@ export default function Dashboard() {
           setError('No nurse data found. Please upload a PDF first.');
         }
 
-        if (scheduleDataStr) {
-          setScheduleData(JSON.parse(scheduleDataStr));
+        if (scheduleResultStr) {
+          const result = JSON.parse(scheduleResultStr);
+          // Transform new API response to match expected format
+          setScheduleData({
+            schedule: result.schedule,
+            compliance: {
+              passed: result.compliance?.status === 'PASSED',
+              violations: result.compliance?.reasons || [],
+              compliance_score: result.compliance?.score || 100
+            },
+            forecast: result.staffing_requirements,
+            retry_count: 0,
+            bright_data: null,
+            memory_insights: result.alerts || []
+          });
         }
       } catch (err) {
         setError('Failed to load data');

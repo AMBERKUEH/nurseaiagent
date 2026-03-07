@@ -14,13 +14,16 @@ import os
 # Add agents directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "agents"))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
+import tempfile
+import os
 
 from orchestrator import Orchestrator
 from agent4_emergency import EmergencyAgent
+from agent0_ocr import OCRAgent
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -195,6 +198,62 @@ def handle_emergency(request: EmergencyRequest):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Emergency handling failed: {str(e)}")
+
+
+# OCR endpoint
+@app.post("/api/ocr")
+async def ocr_extract(file: UploadFile = File(...)):
+    """
+    Extract nurse data from uploaded PDF using OCRAgent.
+    
+    Args:
+        file: PDF file upload
+    
+    Returns:
+        Dict with nurses array and raw_text
+    """
+    try:
+        # Validate file type
+        if not file.filename.endswith(".pdf"):
+            # Return hardcoded nurses with warning
+            return {
+                "nurses": HARDCODED_NURSES,
+                "raw_text": "",
+                "warning": "Only PDF files are supported. Using demo data."
+            }
+        
+        # Save uploaded file temporarily
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+        
+        try:
+            # Extract nurses using OCRAgent
+            ocr_agent = OCRAgent()
+            nurses = ocr_agent.extract(tmp_path)
+            
+            return {
+                "nurses": nurses,
+                "raw_text": f"Extracted {len(nurses)} nurses from PDF",
+                "count": len(nurses)
+            }
+            
+        except Exception as e:
+            # OCR failed, return hardcoded nurses with warning
+            return {
+                "nurses": HARDCODED_NURSES,
+                "raw_text": str(e),
+                "warning": f"OCR extraction failed: {str(e)}. Using demo data."
+            }
+            
+        finally:
+            # Clean up temp file
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+                
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
 
 
 # Root endpoint
