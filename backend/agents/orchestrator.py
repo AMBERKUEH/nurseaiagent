@@ -1,331 +1,283 @@
 """
 Orchestrator: Coordinates all agents for nurse scheduling workflow.
-Integrates MemoryAgent, BrightDataAgent, and SchedulingAgent.
+Integrates ForecastAgent, SchedulingAgent, ComplianceAgent, and EmergencyAgent.
 """
 
 import json
 from typing import Dict, List, Any, Optional
 
-from agent_memory import MemoryAgent
 from agent1_scheduler import SchedulingAgent
-from agent_brightdata import BrightDataAgent
+from agent2_forecast import ForecastAgent
+from agent3_compliance import ComplianceAgent
+from agent4_emergency import EmergencyAgent
 
 
-class SchedulingOrchestrator:
+class Orchestrator:
     """
-    Orchestrates the nurse scheduling workflow:
-    1. Recalls past problem days from memory
-    2. Generates schedule with context
-    3. Learns from approved schedule
+    Orchestrates the complete nurse scheduling workflow with all agents:
+    1. ForecastAgent: Predicts staffing requirements from historical data
+    2. SchedulingAgent: Generates schedule based on requirements
+    3. ComplianceAgent: Checks schedule for compliance violations
+    4. EmergencyAgent: Checks for emergency conflicts and alerts
     """
     
-    def __init__(self, city: str = "Shanghai"):
+    def __init__(self):
         """Initialize orchestrator with all agents."""
-        self.memory_agent = MemoryAgent()
+        self.forecast_agent = ForecastAgent()
         self.scheduling_agent = SchedulingAgent()
-        self.brightdata_agent = BrightDataAgent()
-        self.city = city
-        self.external_signals = None
-        print("SchedulingOrchestrator initialized")
+        self.compliance_agent = ComplianceAgent()
+        self.emergency_agent = EmergencyAgent()
+        print("Orchestrator initialized with all 4 agents")
     
-    def generate_schedule(
+    def run(
         self,
         nurses: List[Dict[str, Any]],
-        rules: Dict[str, Any],
-        staffing_requirements: Dict[str, Any]
+        rules: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Generate a schedule with memory context.
+        Run the complete scheduling workflow with all agents.
         
-        Workflow:
-        1. Recall problem days and fatigue risks from memory
-        2. Pass context to scheduling agent
-        3. Return generated schedule with metadata
+        Pipeline:
+        1. ForecastAgent: Get historical data and predict staffing requirements
+        2. SchedulingAgent: Generate schedule using staffing requirements
+        3. ComplianceAgent: Check schedule compliance → returns pass/fail + reasons
+        4. EmergencyAgent: Check for emergency conflicts → returns alerts list
         
         Args:
-            nurses: List of nurse dicts
-            rules: Scheduling rules
-            staffing_requirements: Minimum staffing per shift
+            nurses: List of nurse dicts with name, skill, ward, unavailable_days
+            rules: Scheduling rules dict
         
         Returns:
-            Dict with schedule and context used
+            Dict with:
+            {
+                "schedule": {...},
+                "staffing_requirements": {...},
+                "compliance": {"status": "PASSED" or "FAILED", "reasons": [...]},
+                "alerts": [...]
+            }
         """
-        print("\n" + "=" * 60)
-        print("ORCHESTRATOR: Generating Schedule")
-        print("=" * 60)
+        print("\n" + "=" * 70)
+        print("ORCHESTRATOR: Running Full Scheduling Pipeline")
+        print("=" * 70)
         
-        # Step 1: Recall memory context
-        print("\n[1/3] Recalling memory context...")
-        context = self.memory_agent.get_scheduling_context()
+        # Step 1: ForecastAgent - Get staffing requirements
+        print("\n[Step 1/4] ForecastAgent: Predicting staffing requirements...")
+        historical_data = self.forecast_agent.get_historical_data()
+        staffing_requirements = self.forecast_agent.predict(historical_data)
+        print(f"   ✓ Staffing requirements: {staffing_requirements}")
         
-        problem_days = context.get("problem_days", [])
-        fatigue_risks = context.get("fatigue_risk_nurses", [])
-        compliance_history = context.get("compliance_history", [])
+        # Step 2: SchedulingAgent - Generate schedule
+        print("\n[Step 2/4] SchedulingAgent: Generating schedule...")
+        schedule = self.scheduling_agent.generate(nurses, rules, staffing_requirements)
+        print(f"   ✓ Schedule generated for {len(schedule)} days")
         
-        print(f"  - Problem days from history: {problem_days}")
-        print(f"  - High fatigue risk nurses: {[n['name'] for n in fatigue_risks]}")
-        if compliance_history:
-            last_score = compliance_history[-1].get("score", "N/A")
-            print(f"  - Last compliance score: {last_score}")
+        # Step 3: ComplianceAgent - Check compliance
+        print("\n[Step 3/4] ComplianceAgent: Checking compliance...")
+        compliance_result = self.compliance_agent.check(schedule, nurses)
+        compliance_status = "PASSED" if compliance_result.get("passed", False) else "FAILED"
+        compliance_reasons = compliance_result.get("violations", [])
+        print(f"   ✓ Compliance: {compliance_status} ({len(compliance_reasons)} violations)")
         
-        # Step 2: Enhance rules with memory context
-        print("\n[2/3] Enhancing rules with memory context...")
-        enhanced_rules = self._enhance_rules_with_memory(rules, context)
+        # Step 4: EmergencyAgent - Check for emergency conflicts
+        print("\n[Step 4/4] EmergencyAgent: Checking for emergency conflicts...")
+        # Convert schedule format for EmergencyAgent if needed
+        schedule_list = self._convert_schedule_to_list(schedule, nurses)
+        # Check each day for potential emergencies (simulated by passing empty disruption)
+        alerts = []
+        for day in schedule:
+            for shift in ["morning", "afternoon", "night"]:
+                assigned_nurses = schedule[day].get(shift, [])
+                if len(assigned_nurses) < staffing_requirements.get(day, 2):
+                    alerts.append(f"UNDERSTAFFED: {day} {shift} has only {len(assigned_nurses)} nurses (required: {staffing_requirements.get(day, 2)})")
         
-        # Step 3: Generate schedule
-        print("\n[3/3] Calling SchedulingAgent...")
-        schedule = self.scheduling_agent.generate(nurses, enhanced_rules, staffing_requirements)
+        # Also check for skill coverage issues
+        nurse_skills = {n["name"]: n["skill"] for n in nurses}
+        for day in schedule:
+            for shift in ["morning", "afternoon", "night"]:
+                assigned = schedule[day].get(shift, [])
+                senior_present = any(nurse_skills.get(n, "N1") in ["N3", "N4"] for n in assigned)
+                if assigned and not senior_present:
+                    alerts.append(f"SKILL GAP: {day} {shift} has no senior nurse (N3/N4)")
         
+        print(f"   ✓ Found {len(alerts)} alerts")
+        
+        # Compile final result
         result = {
             "schedule": schedule,
-            "context_used": {
-                "problem_days_avoided": problem_days,
-                "fatigue_risk_nurses": fatigue_risks,
-                "compliance_history_count": len(compliance_history)
+            "staffing_requirements": staffing_requirements,
+            "compliance": {
+                "status": compliance_status,
+                "reasons": compliance_reasons,
+                "score": compliance_result.get("compliance_score", 0)
             },
-            "metadata": {
-                "nurses_count": len(nurses),
-                "rules_applied": list(enhanced_rules.keys())
-            }
+            "alerts": alerts
         }
         
-        print("\nSchedule generated successfully!")
+        print("\n" + "=" * 70)
+        print("ORCHESTRATOR: Pipeline Complete")
+        print("=" * 70)
+        
         return result
     
-    def _enhance_rules_with_memory(
-        self,
-        rules: Dict[str, Any],
-        context: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Enhance scheduling rules with memory context.
-        
-        Args:
-            rules: Base scheduling rules
-            context: Memory context
-        
-        Returns:
-            Enhanced rules dict
-        """
-        enhanced = rules.copy()
-        
-        # Add problem days as soft constraints
-        problem_days = context.get("problem_days", [])
-        if problem_days:
-            enhanced["problem_days_history"] = problem_days
-            enhanced["problem_days_note"] = (
-                f"These days had compliance violations before: {', '.join(problem_days)}. "
-                "Consider extra staffing or careful assignment on these days."
-            )
-        
-        # Add fatigue risk nurse constraints
-        fatigue_risks = context.get("fatigue_risk_nurses", [])
-        if fatigue_risks:
-            high_risk_nurses = [n["name"] for n in fatigue_risks if n.get("risk_level") == "HIGH"]
-            if high_risk_nurses:
-                enhanced["fatigue_risk_nurses"] = high_risk_nurses
-                enhanced["fatigue_note"] = (
-                    f"These nurses had excessive night shifts: {', '.join(high_risk_nurses)}. "
-                    "Limit their night shifts this week."
-                )
-        
-        return enhanced
-    
-    def approve_and_learn(
+    def _convert_schedule_to_list(
         self,
         schedule: Dict[str, Dict[str, List[str]]],
-        compliance_report: Dict[str, Any],
+        nurses: List[Dict[str, Any]]
+    ) -> List[Dict[str, str]]:
+        """
+        Convert schedule dict to list format for EmergencyAgent.
+        
+        Args:
+            schedule: Schedule dict with days/shifts/nurses
+            nurses: Nurse data for ward lookup
+        
+        Returns:
+            List of assignment dicts
+        """
+        nurse_wards = {n["name"]: n.get("ward", "General") for n in nurses}
+        schedule_list = []
+        
+        for day, shifts in schedule.items():
+            for shift, nurse_list in shifts.items():
+                for nurse in nurse_list:
+                    schedule_list.append({
+                        "nurse": nurse,
+                        "day": day,
+                        "shift": shift,
+                        "ward": nurse_wards.get(nurse, "General")
+                    })
+        
+        return schedule_list
+    
+    def handle_emergency(
+        self,
+        disruption: str,
+        current_schedule: Dict[str, Dict[str, List[str]]],
         nurses: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
-        Approve a schedule and learn from it.
+        Handle an emergency disruption using EmergencyAgent.
         
         Args:
-            schedule: The approved schedule
-            compliance_report: Compliance analysis with violations
-            nurses: Nurse data for context
+            disruption: Description of the emergency/disruption
+            current_schedule: Current schedule dict
+            nurses: List of nurse data
         
         Returns:
-            Insights extracted and stored
+            Dict with alerts and reassignments
         """
-        print("\n" + "=" * 60)
-        print("ORCHESTRATOR: Learning from Approved Schedule")
-        print("=" * 60)
+        print("\n" + "=" * 70)
+        print("ORCHESTRATOR: Handling Emergency")
+        print("=" * 70)
+        print(f"Disruption: {disruption}")
         
-        insights = self.memory_agent.learn_from_schedule(
-            schedule,
-            compliance_report,
-            nurses
-        )
+        # Convert schedule format
+        schedule_list = self._convert_schedule_to_list(current_schedule, nurses)
         
-        print("\nLearning complete. Insights stored in memory.")
-        return insights
-    
-    def explain_nurse_schedule(
-        self,
-        nurse_name: str,
-        schedule: Dict[str, Dict[str, List[str]]]
-    ) -> str:
-        """
-        Get explanation for a nurse's schedule assignments.
+        # Call EmergencyAgent
+        result = self.emergency_agent.handle(disruption, schedule_list, nurses)
         
-        Args:
-            nurse_name: Name of nurse to explain
-            schedule: The schedule
+        # Extract alerts and reassignments
+        alerts = []
+        if result.get("severity") in ["HIGH", "MEDIUM"]:
+            alerts.append(f"EMERGENCY ({result.get('severity')}): {result.get('action_taken', '')}")
         
-        Returns:
-            2-sentence explanation
-        """
-        return self.scheduling_agent.explain(nurse_name, schedule)
-    
-    def get_memory_summary(self) -> Dict[str, Any]:
-        """Get summary of stored memory."""
-        return self.memory_agent.get_scheduling_context()
+        # Convert updated schedule back to dict format
+        updated_schedule_list = result.get("updated_schedule", [])
+        reassignments = []
+        
+        if result.get("action_taken"):
+            reassignments.append(result["action_taken"])
+        
+        return {
+            "alerts": alerts,
+            "reassignments": reassignments,
+            "severity": result.get("severity", "LOW"),
+            "action_taken": result.get("action_taken", "")
+        }
 
 
 def run_scheduling_workflow(
     nurses: List[Dict[str, Any]],
-    rules: Dict[str, Any],
-    staffing_requirements: Dict[str, Any],
-    city: str = "Shanghai",
-    simulate_approval: bool = True
+    rules: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    Run the complete scheduling workflow with all agents.
-    
-    Pipeline:
-    1. BrightDataAgent: Fetch external signals (holidays, weather)
-    2. MemoryAgent: Recall past problem days
-    3. SchedulingAgent: Generate schedule with all context
-    4. Compliance check (simulated)
-    5. MemoryAgent: Learn from approved schedule
+    Convenience function to run the full scheduling workflow.
     
     Args:
         nurses: List of nurse dicts
         rules: Scheduling rules
-        staffing_requirements: Staffing requirements
-        city: City for external signals
-        simulate_approval: If True, simulate approval and learning
     
     Returns:
         Complete workflow result
     """
-    print("\n" + "=" * 60)
-    print("STARTING SCHEDULING PIPELINE")
-    print("=" * 60)
-    
-    orchestrator = SchedulingOrchestrator(city=city)
-    
-    # Step 1: Fetch external signals from BrightDataAgent
-    print("\n[Pipeline Step 1/5] Fetching external signals...")
-    external_signals = orchestrator.brightdata_agent.get_external_signals(city)
-    orchestrator.external_signals = external_signals
-    
-    # Step 2: Generate schedule (includes memory recall internally)
-    print("\n[Pipeline Step 2/5] Generating schedule with context...")
-    result = orchestrator.generate_schedule(nurses, rules, staffing_requirements)
-    result["external_signals"] = external_signals
-    schedule = result["schedule"]
-    
-    # Step 3: Compliance check (simulated)
-    print("\n[Pipeline Step 3/5] Running compliance check...")
-    compliance_report = {
-        "score": 90,
-        "violations": [],
-        "checks_passed": ["max_shifts", "rest_periods", "skill_coverage"],
-        "external_context_used": external_signals["recommendation"]
-    }
-    result["compliance"] = compliance_report
-    
-    # Step 4: Learn from schedule (if approved)
-    if simulate_approval:
-        print("\n[Pipeline Step 4/5] Learning from approved schedule...")
-        insights = orchestrator.approve_and_learn(schedule, compliance_report, nurses)
-        result["insights"] = insights
-    
-    print("\n[Pipeline Step 5/5] Pipeline complete!")
-    print("=" * 60)
-    
-    return result
+    orchestrator = Orchestrator()
+    return orchestrator.run(nurses, rules)
 
 
 if __name__ == "__main__":
-    # Test the orchestrator
-    print("=" * 60)
-    print("ORCHESTRATOR TEST")
-    print("=" * 60)
+    # Test the orchestrator with all agents
+    print("=" * 70)
+    print("ORCHESTRATOR TEST - All 4 Agents")
+    print("=" * 70)
     
-    # Sample data
+    # Sample nurses
     sample_nurses = [
-        {"name": "Zhang Wei", "skill": "N4", "ward": "ICU", "unavailable_days": ["Saturday", "Sunday"]},
-        {"name": "Li Hua", "skill": "N3", "ward": "ICU", "unavailable_days": []},
-        {"name": "Wang Fang", "skill": "N3", "ward": "ER", "unavailable_days": ["Monday"]},
-        {"name": "Liu Ming", "skill": "N2", "ward": "ER", "unavailable_days": []},
-        {"name": "Chen Jing", "skill": "N2", "ward": "General", "unavailable_days": ["Wednesday"]},
-        {"name": "Yang Li", "skill": "N1", "ward": "General", "unavailable_days": []},
-        {"name": "Zhao Qiang", "skill": "N4", "ward": "ICU", "unavailable_days": ["Friday"]},
-        {"name": "Wu Ying", "skill": "N3", "ward": "ER", "unavailable_days": []},
+        {"name": "Zhang Wei", "skill": "N3", "ward": "ICU", "unavailable_days": ["Tuesday"]},
+        {"name": "Li Na", "skill": "N2", "ward": "General", "unavailable_days": []},
+        {"name": "Wang Fang", "skill": "N4", "ward": "ER", "unavailable_days": ["Friday"]},
+        {"name": "Chen Jing", "skill": "N2", "ward": "Pediatrics", "unavailable_days": ["Wednesday"]},
+        {"name": "Liu Yang", "skill": "N3", "ward": "ICU", "unavailable_days": []}
     ]
     
+    # Sample rules
     sample_rules = {
         "max_shifts_per_week": 5,
+        "min_rest_hours": 12,
         "ward_skill_requirements": {
-            "ICU": {"min_skill": "N3"},
-            "ER": {"min_skill": "N2"},
-            "General": {"min_skill": "N1"}
+            "ICU": "N3",
+            "ER": "N3",
+            "General": "N2",
+            "Pediatrics": "N2"
         }
     }
     
-    sample_staffing = {
-        "Monday": {"morning": 3, "afternoon": 3, "night": 2},
-        "Tuesday": {"morning": 3, "afternoon": 3, "night": 2},
-        "Wednesday": {"morning": 3, "afternoon": 3, "night": 2},
-        "Thursday": {"morning": 3, "afternoon": 3, "night": 2},
-        "Friday": {"morning": 3, "afternoon": 3, "night": 2},
-        "Saturday": {"morning": 2, "afternoon": 2, "night": 2},
-        "Sunday": {"morning": 2, "afternoon": 2, "night": 2},
-    }
-    
-    # Pre-populate some memory for demonstration
-    orchestrator = SchedulingOrchestrator()
-    orchestrator.memory_agent.remember("problem_days", ["Monday", "Friday"])
-    orchestrator.memory_agent.remember("fatigue_risk_nurses", [
-        {"name": "Liu Ming", "night_shifts": 4, "risk_level": "HIGH"}
-    ])
-    
-    # Run workflow
-    print("\nRunning scheduling workflow...")
-    result = run_scheduling_workflow(
-        sample_nurses,
-        sample_rules,
-        sample_staffing,
-        simulate_approval=True
-    )
+    # Run orchestrator
+    orchestrator = Orchestrator()
+    result = orchestrator.run(sample_nurses, sample_rules)
     
     # Display results
-    print("\n" + "=" * 60)
-    print("WORKFLOW RESULT")
-    print("=" * 60)
+    print("\n" + "=" * 70)
+    print("FINAL RESULT")
+    print("=" * 70)
     
-    print("\nExternal Signals (BrightDataAgent):")
-    print(json.dumps(result["external_signals"], indent=2, ensure_ascii=False))
+    print("\n📊 Staffing Requirements (from ForecastAgent):")
+    for day, nurses_needed in result["staffing_requirements"].items():
+        print(f"   {day}: {nurses_needed} nurses")
     
-    print("\nMemory Context Used:")
-    print(json.dumps(result["context_used"], indent=2, ensure_ascii=False))
+    print("\n📅 Generated Schedule:")
+    for day, shifts in result["schedule"].items():
+        print(f"\n   {day}:")
+        for shift, nurses in shifts.items():
+            nurse_list = ", ".join(nurses) if nurses else "(empty)"
+            print(f"      {shift}: {nurse_list}")
     
-    print("\nGenerated Schedule (sample):")
-    for day in ["Monday", "Tuesday", "Wednesday"]:
-        print(f"\n  {day}:")
-        for shift in ["morning", "afternoon", "night"]:
-            nurses = result["schedule"][day][shift]
-            print(f"    {shift}: {', '.join(nurses) if nurses else '(empty)'}")
+    print(f"\n✅ Compliance: {result['compliance']['status']}")
+    print(f"   Score: {result['compliance']['score']}%")
+    if result['compliance']['reasons']:
+        print("   Violations:")
+        for reason in result['compliance']['reasons']:
+            print(f"      - {reason}")
+    else:
+        print("   No violations found!")
     
-    print("\nCompliance Report:")
-    print(json.dumps(result["compliance"], indent=2, ensure_ascii=False))
+    print(f"\n⚠️  Alerts ({len(result['alerts'])}):")
+    if result['alerts']:
+        for alert in result['alerts']:
+            print(f"   - {alert}")
+    else:
+        print("   No alerts")
     
-    print("\nInsights Learned:")
-    print(json.dumps(result.get("insights", {}), indent=2, ensure_ascii=False))
-    
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 70)
     print("ORCHESTRATOR TEST COMPLETE")
-    print("=" * 60)
+    print("=" * 70)
