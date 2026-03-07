@@ -1,34 +1,13 @@
-import { Upload, FileText, Brain, CheckCircle, Loader2 } from 'lucide-react';
+import { Upload, FileText, Brain, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useState, useRef, useEffect } from 'react';
-import { uploadPDF, generateSchedule } from '../services/api';
-
-// Default nurses for demo
-const DEFAULT_NURSES = [
-  { name: "Zhang Wei", skill: "N3", ward: "ICU", unavailable_days: ["Tuesday"] },
-  { name: "Li Na", skill: "N2", ward: "General", unavailable_days: [] },
-  { name: "Wang Fang", skill: "N4", ward: "ER", unavailable_days: ["Friday"] },
-  { name: "Chen Jing", skill: "N2", ward: "Pediatrics", unavailable_days: ["Wednesday"] },
-  { name: "Liu Yang", skill: "N3", ward: "ICU", unavailable_days: [] }
-];
-
-// Default rules
-const DEFAULT_RULES = {
-  max_shifts_per_week: 5,
-  min_rest_hours: 12,
-  ward_skill_requirements: {
-    ICU: "N3",
-    ER: "N3",
-    General: "N2",
-    Pediatrics: "N2"
-  }
-};
+import { uploadPDF, generateSchedule, fetchNurses, healthCheck } from '../services/api';
 
 // Badge states
 interface BadgeState {
-  ocr: 'idle' | 'loading' | 'done';
-  scheduling: 'idle' | 'loading' | 'done';
-  compliance: 'idle' | 'loading' | 'done';
+  ocr: 'idle' | 'loading' | 'done' | 'error';
+  scheduling: 'idle' | 'loading' | 'done' | 'error';
+  compliance: 'idle' | 'loading' | 'done' | 'error';
 }
 
 export default function UploadPage() {
@@ -40,12 +19,33 @@ export default function UploadPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [extractedNurses, setExtractedNurses] = useState<any[] | null>(null);
+  const [apiNurses, setApiNurses] = useState<any[] | null>(null);
   const [badgeStates, setBadgeStates] = useState<BadgeState>({
     ocr: 'idle',
     scheduling: 'idle',
     compliance: 'idle'
   });
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'error'>('checking');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Check backend health on mount
+  useEffect(() => {
+    const checkBackend = async () => {
+      const health = await healthCheck();
+      if (health && health.status === 'ok') {
+        setBackendStatus('connected');
+        // Fetch nurses from API
+        const nursesData = await fetchNurses();
+        if (nursesData && nursesData.nurses) {
+          setApiNurses(nursesData.nurses);
+        }
+      } else {
+        setBackendStatus('error');
+        setError('Backend not connected — make sure uvicorn is running on port 8000');
+      }
+    };
+    checkBackend();
+  }, []);
 
   const handleFileSelect = async (selectedFile: File) => {
     if (selectedFile.type !== 'application/pdf') {
@@ -65,18 +65,18 @@ export default function UploadPage() {
   const extractPDF = async (pdfFile: File) => {
     setIsUploading(true);
     setSuccess('Extracting data from PDF...');
+    setBadgeStates(prev => ({ ...prev, ocr: 'loading' }));
     
     const result = await uploadPDF(pdfFile);
     
-    if (result) {
+    if (result && result.nurses) {
       setExtractedNurses(result.nurses);
-      setSuccess(`✅ PDF extracted successfully — ${result.count} nurses found`);
-      if (result.warning) {
-        console.warn(result.warning);
-      }
+      setSuccess(`✅ PDF extracted successfully — ${result.nurses_found} nurses found`);
+      setBadgeStates(prev => ({ ...prev, ocr: 'done' }));
     } else {
-      setError('Failed to extract data from PDF. Please try again.');
+      setError('OCR Agent failed — PDF may be unreadable or backend error');
       setSuccess(null);
+      setBadgeStates(prev => ({ ...prev, ocr: 'error' }));
     }
     
     setIsUploading(false);
@@ -100,12 +100,8 @@ export default function UploadPage() {
   };
 
   const animateBadges = async () => {
-    // Reset badges
-    setBadgeStates({ ocr: 'loading', scheduling: 'idle', compliance: 'idle' });
-    
-    // OCR badge (1 second)
-    await new Promise(r => setTimeout(r, 1000));
-    setBadgeStates(prev => ({ ...prev, ocr: 'done', scheduling: 'loading' }));
+    // OCR is already done or skipped
+    setBadgeStates(prev => ({ ...prev, scheduling: 'loading' }));
     
     // Scheduling badge (2 seconds)
     await new Promise(r => setTimeout(r, 2000));
@@ -117,17 +113,28 @@ export default function UploadPage() {
   };
 
   const handleGenerate = async () => {
+    if (backendStatus !== 'connected') {
+      setError('Backend not connected — cannot generate schedule');
+      return;
+    }
+
     setIsGenerating(true);
     setError(null);
     
     // Start badge animation
     await animateBadges();
     
-    // Use extracted nurses or default
-    const nursesToUse = extractedNurses || DEFAULT_NURSES;
+    // Use extracted nurses from OCR, or nurses from API
+    const nursesToUse = extractedNurses || apiNurses;
+    
+    if (!nursesToUse || nursesToUse.length === 0) {
+      setError('No nurse data available — upload a PDF or wait for API to load');
+      setIsGenerating(false);
+      return;
+    }
     
     // Call generate schedule API
-    const result = await generateSchedule(nursesToUse, DEFAULT_RULES);
+    const result = await generateSchedule(nursesToUse);
     
     if (result) {
       // Store result in localStorage for dashboard
@@ -137,31 +144,44 @@ export default function UploadPage() {
       // Navigate to dashboard
       navigate('/dashboard');
     } else {
-      setError('Failed to generate schedule. Please try again.');
+      setError('Schedule generation failed — check agent status in backend');
       setIsGenerating(false);
     }
   };
 
   const handleDemoClick = async () => {
-    // Auto-fill with demo data
-    setExtractedNurses(DEFAULT_NURSES);
-    setSuccess('✅ Demo data loaded — 5 nurses ready');
-    
-    // Wait 0.5 seconds then trigger generate
-    setTimeout(async () => {
-      await handleGenerate();
-    }, 500);
+    if (backendStatus !== 'connected') {
+      setError('Backend not connected — cannot run demo');
+      return;
+    }
+
+    // Use nurses from API (fetched on mount)
+    if (apiNurses && apiNurses.length > 0) {
+      setExtractedNurses(apiNurses);
+      setSuccess(`✅ Demo data loaded — ${apiNurses.length} nurses from API`);
+      
+      // Wait 0.5 seconds then trigger generate
+      setTimeout(async () => {
+        await handleGenerate();
+      }, 500);
+    } else {
+      setError('No nurse data available from API — cannot run demo');
+    }
   };
 
-  const getBadgeStyle = (state: 'idle' | 'loading' | 'done') => {
+  const getBadgeStyle = (state: 'idle' | 'loading' | 'done' | 'error') => {
     if (state === 'done') {
       return { backgroundColor: '#1A3A2F', border: '1px solid #00E5A0' };
+    }
+    if (state === 'error') {
+      return { backgroundColor: '#3A1A1F', border: '1px solid #FF3D5A' };
     }
     return { backgroundColor: '#1A2235' };
   };
 
-  const getBadgeTextColor = (state: 'idle' | 'loading' | 'done') => {
+  const getBadgeTextColor = (state: 'idle' | 'loading' | 'done' | 'error') => {
     if (state === 'done') return '#00E5A0';
+    if (state === 'error') return '#FF3D5A';
     return '#00D4FF';
   };
 
@@ -201,15 +221,34 @@ export default function UploadPage() {
           </p>
         </div>
 
+        {/* Backend Status */}
+        <div 
+          className="mb-4 p-2 rounded-lg text-center"
+          style={{ 
+            backgroundColor: backendStatus === 'connected' ? 'rgba(0, 229, 160, 0.1)' : 
+                            backendStatus === 'error' ? 'rgba(255, 61, 90, 0.1)' : 'rgba(0, 212, 255, 0.1)',
+            border: `1px solid ${backendStatus === 'connected' ? '#00E5A0' : 
+                                 backendStatus === 'error' ? '#FF3D5A' : '#00D4FF'}`
+          }}
+        >
+          <p style={{ fontSize: '12px', color: backendStatus === 'connected' ? '#00E5A0' : 
+                                                   backendStatus === 'error' ? '#FF3D5A' : '#00D4FF' }}>
+            {backendStatus === 'checking' ? '⏳ Checking backend connection...' :
+             backendStatus === 'connected' ? '✅ Backend connected — all agents ready' :
+             '❌ Backend disconnected — start uvicorn on port 8000'}
+          </p>
+        </div>
+
         {/* Error Message */}
         {error && (
           <div 
-            className="mb-4 p-3 rounded-lg"
+            className="mb-4 p-3 rounded-lg flex items-center gap-2"
             style={{ 
               backgroundColor: 'rgba(255, 61, 90, 0.2)',
               border: '1px solid #FF3D5A'
             }}
           >
+            <AlertCircle size={16} style={{ color: '#FF3D5A' }} />
             <p style={{ fontSize: '14px', color: '#FF3D5A' }}>{error}</p>
           </div>
         )}
@@ -279,11 +318,14 @@ export default function UploadPage() {
           >
             {badgeStates.ocr === 'loading' ? (
               <Loader2 size={14} className="animate-spin" style={{ color: '#00D4FF' }} />
+            ) : badgeStates.ocr === 'error' ? (
+              <AlertCircle size={14} style={{ color: '#FF3D5A' }} />
             ) : (
               <FileText size={14} style={{ color: getBadgeTextColor(badgeStates.ocr) }} />
             )}
             <span style={{ fontSize: '13px', color: getBadgeTextColor(badgeStates.ocr) }}>
-              {badgeStates.ocr === 'done' ? '✅ OCR Extraction' : '📄 OCR Extraction'}
+              {badgeStates.ocr === 'done' ? '✅ OCR Extraction' : 
+               badgeStates.ocr === 'error' ? '❌ OCR Failed' : '📄 OCR Extraction'}
             </span>
           </div>
           <div 
@@ -317,7 +359,7 @@ export default function UploadPage() {
         {/* Generate Button */}
         <button
           onClick={handleGenerate}
-          disabled={isGenerating}
+          disabled={isGenerating || backendStatus !== 'connected'}
           className="w-full transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           style={{
             width: '480px',
@@ -330,7 +372,7 @@ export default function UploadPage() {
             letterSpacing: '1px',
             borderRadius: '8px',
             border: 'none',
-            cursor: isGenerating ? 'not-allowed' : 'pointer',
+            cursor: isGenerating || backendStatus !== 'connected' ? 'not-allowed' : 'pointer',
           }}
         >
           {isGenerating ? (

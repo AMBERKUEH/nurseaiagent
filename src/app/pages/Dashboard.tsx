@@ -6,7 +6,8 @@ import { WeeklySchedule } from '../components/WeeklySchedule';
 import { FatigueIndex } from '../components/FatigueIndex';
 import { ComplianceBar } from '../components/ComplianceBar';
 import { NurseModal } from '../components/NurseModal';
-import { MessageSquare, AlertTriangle, Loader2 } from 'lucide-react';
+import { MessageSquare, AlertTriangle, Loader2, AlertCircle } from 'lucide-react';
+import { handleEmergency } from '../services/api';
 
 interface Nurse {
   name: string;
@@ -36,6 +37,9 @@ export default function Dashboard() {
   const [scheduleData, setScheduleData] = useState<ScheduleData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [emergencyInput, setEmergencyInput] = useState('');
+  const [emergencyResult, setEmergencyResult] = useState<any>(null);
+  const [isProcessingEmergency, setIsProcessingEmergency] = useState(false);
 
   useEffect(() => {
     // Load data from localStorage
@@ -109,6 +113,26 @@ export default function Dashboard() {
   const complianceMessage = isCompliant
     ? `✓ SCHEDULE COMPLIANT — ${scheduleData?.compliance?.compliance_score ?? 100}% RULES PASSED`
     : `✗ VIOLATIONS DETECTED — ${scheduleData?.compliance?.violations?.length ?? 0} ISSUES FOUND`;
+
+  const handleEmergencySubmit = async () => {
+    if (!emergencyInput.trim()) return;
+    
+    setIsProcessingEmergency(true);
+    setError(null);
+    
+    const result = await handleEmergency(
+      emergencyInput,
+      scheduleData?.schedule
+    );
+    
+    if (result) {
+      setEmergencyResult(result);
+    } else {
+      setError('Emergency Agent failed — check backend logs');
+    }
+    
+    setIsProcessingEmergency(false);
+  };
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#0A0F1E' }}>

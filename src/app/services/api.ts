@@ -1,11 +1,30 @@
 const API_BASE = "http://localhost:8000";
 
-const showToast = (message: string, type: "error" | "success" = "error") => {
-  console.error(`[${type.toUpperCase()}] ${message}`);
+// Helper to show errors
+const showError = (message: string) => {
+  console.error(`[ERROR] ${message}`);
 };
 
-// POST /api/ocr - Upload PDF file and extract nurses
-export async function uploadPDF(file: File): Promise<{ nurses: any[]; count: number; warning?: string } | null> {
+// GET /api/nurses - Fetch nurses from API (BrightData or fallback)
+export async function fetchNurses(): Promise<{ nurses: any[]; source: string } | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/nurses`);
+    
+    if (!response.ok) {
+      const error = await response.json();
+      showError(`Failed to fetch nurses: ${error.detail || 'Unknown error'}`);
+      return null;
+    }
+    
+    return await response.json();
+  } catch (err) {
+    showError("Network error fetching nurses — check backend is running on port 8000");
+    return null;
+  }
+}
+
+// POST /api/ocr - Upload PDF and extract nurses
+export async function uploadPDF(file: File): Promise<{ nurses: any[]; raw_text: string; nurses_found: number } | null> {
   const formData = new FormData();
   formData.append("file", file);
 
@@ -17,32 +36,29 @@ export async function uploadPDF(file: File): Promise<{ nurses: any[]; count: num
 
     if (!response.ok) {
       const error = await response.json();
-      showToast(error.error || "Upload failed");
+      showError(`OCR failed: ${error.detail || 'PDF may be unreadable'}`);
       return null;
     }
 
-    const data = await response.json();
-    return {
-      nurses: data.nurses,
-      count: data.count || data.nurses.length,
-      warning: data.warning
-    };
+    return await response.json();
   } catch (err) {
-    showToast("Network error during upload");
+    showError("Network error during OCR — check backend is running");
     return null;
   }
 }
 
-// POST /api/generate-schedule - Generate schedule with nurses and rules
-export async function generateSchedule(nurses?: any[], rules?: any): Promise<{
+// POST /api/generate-schedule - Generate schedule with all agents
+export async function generateSchedule(
+  nurses: any[], 
+  rules?: any
+): Promise<{
   schedule: any;
   staffing_requirements: any;
   compliance: { status: string; reasons: string[]; score: number };
   alerts: string[];
 } | null> {
   try {
-    const body: any = {};
-    if (nurses) body.nurses = nurses;
+    const body: any = { nurses };
     if (rules) body.rules = rules;
 
     const response = await fetch(`${API_BASE}/api/generate-schedule`, {
@@ -53,65 +69,87 @@ export async function generateSchedule(nurses?: any[], rules?: any): Promise<{
 
     if (!response.ok) {
       const error = await response.json();
-      showToast(error.error || "Schedule generation failed");
+      const agentName = error.detail?.includes("Forecast") ? "Forecast Agent" :
+                       error.detail?.includes("Scheduling") ? "Scheduling Agent" :
+                       error.detail?.includes("Compliance") ? "Compliance Agent" :
+                       "Schedule Generation";
+      showError(`${agentName} failed — ${error.detail || 'Unknown error'}`);
       return null;
     }
 
     return await response.json();
   } catch (err) {
-    showToast("Network error during generation");
+    showError("Network error during schedule generation — check backend is running");
     return null;
   }
 }
 
-// POST /explain - Get nurse explanation
-export async function explainNurse(
-  nurseName: string,
-  schedule: any
-): Promise<{ explanation: string } | null> {
-  try {
-    const response = await fetch(`${API_BASE}/explain`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nurse_name: nurseName, schedule }),
-    });
-
-    if (!response.ok) {
-      showToast("Failed to get explanation");
-      return null;
-    }
-
-    return await response.json();
-  } catch (err) {
-    showToast("Network error getting explanation");
-    return null;
-  }
-}
-
-// POST /update - Handle disruption
-export async function updateSchedule(
-  currentSchedule: any,
-  disruption: string
+// POST /api/emergency - Handle emergency disruption
+export async function handleEmergency(
+  disruption: string,
+  currentSchedule?: any
 ): Promise<{
+  alerts: string[];
+  reassignments: string[];
   updated_schedule: any;
-  action_taken: string;
-  severity: "LOW" | "MEDIUM" | "HIGH";
+  severity: string;
 } | null> {
   try {
-    const response = await fetch(`${API_BASE}/update`, {
+    const body: any = { disruption };
+    if (currentSchedule) body.current_schedule = currentSchedule;
+
+    const response = await fetch(`${API_BASE}/api/emergency`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ current_schedule: currentSchedule, disruption }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
-      showToast("Failed to process disruption");
+      const error = await response.json();
+      showError(`Emergency Agent failed — ${error.detail || 'Unknown error'}`);
       return null;
     }
 
     return await response.json();
   } catch (err) {
-    showToast("Network error processing disruption");
+    showError("Network error during emergency handling — check backend is running");
+    return null;
+  }
+}
+
+// GET /api/context - Get memory context
+export async function fetchContext(): Promise<{
+  past_schedules: any[];
+  patterns: any[];
+  error?: string;
+} | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/context`);
+    
+    if (!response.ok) {
+      const error = await response.json();
+      showError(`Failed to fetch context: ${error.detail || 'Unknown error'}`);
+      return null;
+    }
+    
+    return await response.json();
+  } catch (err) {
+    showError("Network error fetching context — check backend is running");
+    return null;
+  }
+}
+
+// GET /api/health - Health check
+export async function healthCheck(): Promise<{ status: string; agents: any } | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/health`);
+    
+    if (!response.ok) {
+      return null;
+    }
+    
+    return await response.json();
+  } catch (err) {
     return null;
   }
 }
