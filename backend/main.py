@@ -43,9 +43,10 @@ app.add_middleware(
 )
 
 # Initialize all agents
+print("\n" + "=" * 70)
+print("🚀 NURSEAI MULTI-AGENT SYSTEM STARTING")
 print("=" * 70)
-print("INITIALIZING ALL AGENTS")
-print("=" * 70)
+print("\n📦 INITIALIZING ALL AGENTS...\n")
 
 try:
     ocr_agent = OCRAgent()
@@ -96,7 +97,9 @@ except Exception as e:
     print(f"✗ MemoryAgent failed: {e}")
     memory_agent = None
 
-print("=" * 70)
+print("\n" + "=" * 70)
+print("✅ ALL AGENTS READY — SERVER STARTING")
+print("=" * 70 + "\n")
 
 # Path to fallback nurses.json
 NURSES_JSON_PATH = os.path.join(os.path.dirname(__file__), "nurses.json")
@@ -148,7 +151,7 @@ def get_nurses():
     Get nurses from BrightDataAgent or fallback to nurses.json.
     NO hardcoded data returned directly.
     """
-    print("\n[API] GET /api/nurses called")
+    print("\n🔍 [API] GET /api/nurses called")
     
     # Try BrightDataAgent first
     if brightdata_agent:
@@ -183,7 +186,7 @@ async def ocr_extract(file: UploadFile = File(...)):
     """
     Extract nurse data from uploaded PDF using OCRAgent.
     """
-    print("\n[API] POST /api/ocr called")
+    print("\n📄 [API] POST /api/ocr called")
     print(f"  → File: {file.filename}")
     
     # Validate file type
@@ -242,7 +245,7 @@ def generate_schedule(request: GenerateScheduleRequest):
     3. ComplianceAgent → compliance check
     4. EmergencyAgent → alerts check
     """
-    print("\n[API] POST /api/generate-schedule called")
+    print("\n📅 [API] POST /api/generate-schedule called")
     
     # Get nurses from request or fallback
     nurses = request.nurses
@@ -274,7 +277,7 @@ def generate_schedule(request: GenerateScheduleRequest):
     }
     
     # Step 1: ForecastAgent
-    print("\n  [Step 1/4] ForecastAgent")
+    print("\n  📊 [Step 1/4] ForecastAgent")
     if forecast_agent:
         try:
             print("    → Getting historical data...")
@@ -294,7 +297,7 @@ def generate_schedule(request: GenerateScheduleRequest):
         raise HTTPException(status_code=503, detail="Forecast Agent not available")
     
     # Step 2: SchedulingAgent
-    print("\n  [Step 2/4] SchedulingAgent")
+    print("\n  🗓️  [Step 2/4] SchedulingAgent")
     if scheduling_agent:
         try:
             print("    → Generating schedule...")
@@ -309,7 +312,7 @@ def generate_schedule(request: GenerateScheduleRequest):
         raise HTTPException(status_code=503, detail="Scheduling Agent not available")
     
     # Step 3: ComplianceAgent
-    print("\n  [Step 3/4] ComplianceAgent")
+    print("\n  ⚖️  [Step 3/4] ComplianceAgent")
     if compliance_agent:
         try:
             print("    → Checking compliance...")
@@ -337,7 +340,7 @@ def generate_schedule(request: GenerateScheduleRequest):
         }
     
     # Step 4: EmergencyAgent (check for alerts)
-    print("\n  [Step 4/4] EmergencyAgent (alert check)")
+    print("\n  🚨 [Step 4/4] EmergencyAgent (alert check)")
     if emergency_agent:
         try:
             print("    → Checking for emergency conflicts...")
@@ -371,7 +374,7 @@ def generate_schedule(request: GenerateScheduleRequest):
         print("    ✗ EmergencyAgent not available")
         result["alerts"] = ["Emergency Agent not available"]
     
-    print("\n  ✓ All agents completed successfully")
+    print("\n  ✅ ORCHESTRATOR COMPLETE — returning results")
     return result
 
 
@@ -381,7 +384,7 @@ def handle_emergency(request: EmergencyRequest):
     """
     Handle emergency disruption using EmergencyAgent.
     """
-    print("\n[API] POST /api/emergency called")
+    print("\n🚨 [API] POST /api/emergency called")
     print(f"  → Disruption: {request.disruption}")
     
     if not emergency_agent:

@@ -1,5 +1,10 @@
 fastapi
 uvicorn
-google-generativeai
 python-dotenv
+python-multipart
+requests
+pillow
+groq
+acontext
+pdf2image
 faker
