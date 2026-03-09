@@ -1,40 +1,29 @@
-"""
-Quick test for Roboflow surgical instruments model
-"""
-from roboflow import Roboflow
-import cv2
+# quicktest.py - Test the trained model
+from ultralytics import YOLO
+import os
 
-print("[QuickTest] Loading Roboflow model...")
-rf = Roboflow(api_key="bX5IkiMxH6IOh59gH6Ku")
-project = rf.workspace("abhinav-ytcui").project("surgical-instruments-zmagm")
-model = project.version(1).model
-print("[QuickTest] Model loaded!")
-
-# Test on webcam frame
-print("[QuickTest] Capturing webcam frame...")
-cap = cv2.VideoCapture(0)
-ret, frame = cap.read()
-cap.release()
-
-if ret:
-    # Save frame
-    cv2.imwrite("test.jpg", frame)
-    print("[QuickTest] Saved test.jpg")
-    
-    # Run prediction
-    print("[QuickTest] Running prediction...")
-    results = model.predict("test.jpg", confidence=30)
-    
-    # Print results
-    data = results.json()
-    print(f"\n[QuickTest] Predictions found: {len(data['predictions'])}")
-    
-    for pred in data['predictions']:
-        print(f"  - {pred['class']}: {pred['confidence']:.1f}%")
-    
-    # Save output with boxes
-    results.save("output.jpg")
-    print("\n[QuickTest] Saved output.jpg with bounding boxes")
-    print("[QuickTest] Done! Check output.jpg")
+# Try to load trained model
+trained_model_path = 'runs/detect/train/weights/best.pt'
+if os.path.exists(trained_model_path):
+    model = YOLO(trained_model_path)
+    print(f"✅ Loaded trained model: {trained_model_path}")
 else:
-    print("[QuickTest] Error: Could not capture webcam frame")
+    print("❌ Trained model not found. Run training first!")
+    exit(1)
+
+print("\nClasses:", model.names)
+print(f"Total classes: {len(model.names)}")
+
+# Test on a sample image from dataset
+sample_image = 'Surgical-Instruments-1/test/images/File00877_jpg.rf.0c4b7a8a1e5f3d2b1c9e8f7a6b5c4d3e.jpg'
+if os.path.exists(sample_image):
+    print(f"\n🧪 Testing on: {sample_image}")
+    results = model(sample_image, conf=0.3)
+    print(f"Found {len(results[0].boxes)} instruments")
+    for box in results[0].boxes:
+        class_id = int(box.cls)
+        conf = float(box.conf)
+        print(f"  → {model.names[class_id]} ({conf:.0%})")
+    results[0].show()
+else:
+    print("\n⚠️ Sample image not found. Training is still in progress or check the test folder.")

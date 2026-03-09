@@ -20,7 +20,7 @@ app = FastAPI(title="SurgEye API", version="1.0.0")
 # Enable CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5176", "http://localhost:5177", "http://localhost:5178", "http://localhost:5179"],
+    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5176", "http://localhost:5177", "http://localhost:5178", "http://localhost:5179", "http://localhost:5180"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -389,7 +389,7 @@ async def websocket_video_stream(websocket: WebSocket, video_path: str):
 
 if __name__ == "__main__":
     import uvicorn
-    PORT = 8004  # Use different port to avoid conflict
+    PORT = 8005  # Use different port to avoid conflict
     print("=" * 60)
     print("SURGEYE SURGICAL INSTRUMENT VISION SYSTEM")
     print("=" * 60)

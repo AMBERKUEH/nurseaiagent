@@ -11,10 +11,11 @@ from datetime import datetime
 from typing import List, Dict, Tuple, Any
 from collections import Counter, deque
 
-# Surgical instrument classes
+# Surgical instrument classes (15 classes from dataset)
 CLASSES = [
-    'Army_navy', 'Bulldog', 'Castroviejo', 'Forceps',
-    'Frazier', 'Hemostat', 'IrisNeedle', 'Mayo_metz', 'Potts'
+    'Army_navy', 'Bulldog', 'Castroviejo', 'Forceps', 'Frazier',
+    'Hemostat', 'Iris', 'Mayo_metz', 'Needle', 'Potts',
+    'Richardson', 'Scalpel', 'Towel_clip', 'Weitlaner', 'Yankauer'
 ]
 
 # ✅ Unique colors per instrument class (BGR format for OpenCV)
@@ -25,9 +26,15 @@ CLASS_COLORS = {
     'Forceps':     (255, 255, 0),    # Yellow
     'Frazier':     (255, 0, 255),    # Pink/Magenta
     'Hemostat':    (0, 255, 255),    # Cyan
-    'IrisNeedle':  (128, 0, 255),    # Purple
+    'Iris':        (128, 0, 255),    # Purple
     'Mayo_metz':   (0, 128, 255),    # Light Blue
+    'Needle':      (255, 128, 0),    # Dark Orange
     'Potts':       (0, 255, 128),    # Mint
+    'Richardson':  (128, 255, 0),    # Lime
+    'Scalpel':     (255, 0, 128),    # Rose
+    'Towel_clip':  (0, 0, 255),      # Red
+    'Weitlaner':   (128, 128, 255),  # Light Purple
+    'Yankauer':    (255, 255, 128),  # Light Yellow
 }
 
 # Detection stability buffer
@@ -43,11 +50,15 @@ os.makedirs('alerts', exist_ok=True)
 # Load YOLOv8 model (local - no API lag!)
 print("[SurgEye] Loading YOLOv8 model locally...")
 try:
-    # Try to load fine-tuned model if available
-    model_path = 'Surgical-Instruments-1/weights/best.pt'
-    if os.path.exists(model_path):
-        model = YOLO(model_path)
-        print(f"[SurgEye] Loaded fine-tuned model: {model_path}")
+    # Try to load trained model first
+    trained_model_path = 'runs/detect/train/weights/best.pt'
+    if os.path.exists(trained_model_path):
+        model = YOLO(trained_model_path)
+        print(f"[SurgEye] Loaded trained model: {trained_model_path}")
+    # Fall back to dataset weights if available
+    elif os.path.exists('Surgical-Instruments-1/weights/best.pt'):
+        model = YOLO('Surgical-Instruments-1/weights/best.pt')
+        print("[SurgEye] Loaded dataset weights")
     else:
         # Fall back to pretrained YOLOv8s
         model = YOLO('yolov8s.pt')

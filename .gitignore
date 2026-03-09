@@ -1,33 +1,34 @@
-# Environment variables - NEVER commit this
-.env
-
-# virtual environment
-.venv
-
-# Node modules
-node_modules/
-node_modules
-
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
+*.pyc
+*.pyo
+*.pyd
 .Python
-env/
+*.egg-info/
+dist/
+build/
+.env
+.venv
 venv/
-ENV/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
+# Model weights (too large for git)
+*.pt
+*.pth
+runs/
+
+# Dataset cache
+*.cache
+Surgical-Instruments-1/
+surgeye/backend/Surgical-Instruments-1/
+
+# Node
+node_modules/
+.next/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Build outputs
-dist/
-build/
+# IDE
+.vscode/
+.idea/
