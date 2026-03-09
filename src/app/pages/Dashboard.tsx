@@ -78,6 +78,40 @@ export default function Dashboard() {
             memory_insights: result.alerts || []
           });
           
+          // Calculate dynamic fatigue scores from schedule
+          if (result.schedule && nursesData) {
+            const parsedNurses = JSON.parse(nursesData);
+            const updatedNurses = parsedNurses.map((nurse: any) => {
+              const name = nurse.name;
+              let totalShifts = 0;
+              let nightShifts = 0;
+              
+              // Count shifts from schedule
+              Object.entries(result.schedule).forEach(([day, shifts]: [string, any]) => {
+                ['morning', 'afternoon', 'night'].forEach(shiftType => {
+                  if (shifts[shiftType] && shifts[shiftType].includes(name)) {
+                    totalShifts++;
+                    if (shiftType === 'night') nightShifts++;
+                  }
+                });
+              });
+              
+              // Calculate fatigue: (total * 12) + (nights * 8), capped at 100
+              const fatigueScore = Math.min(100, (totalShifts * 12) + (nightShifts * 8));
+              
+              return {
+                ...nurse,
+                fatigue_score: fatigueScore,
+                total_shifts: totalShifts,
+                night_shifts: nightShifts
+              };
+            });
+            
+            setNurses(updatedNurses);
+            // Update localStorage with new fatigue scores
+            localStorage.setItem('nurses', JSON.stringify(updatedNurses));
+          }
+          
           // Build real activity log from API response
           const newActivityLog: ActivityLogItem[] = [];
           const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

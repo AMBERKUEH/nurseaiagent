@@ -1,4 +1,5 @@
 import { Nurse } from '../data/mockData';
+import { AlertTriangle, AlertCircle } from 'lucide-react';
 
 interface StaffListProps {
   nurses: Nurse[];
@@ -57,33 +58,48 @@ export function StaffList({ nurses, onNurseClick }: StaffListProps) {
 
       {/* Nurse Cards */}
       <div className="flex flex-col gap-3">
-        {nurses.map((nurse) => (
-          <div
-            key={nurse.id}
-            className="cursor-pointer transition-all hover:border-[#00D4FF]"
-            style={{
-              backgroundColor: '#111827',
-              borderRadius: '8px',
-              padding: '12px',
-              border: '1px solid transparent',
-            }}
-            onClick={() => onNurseClick?.(nurse)}
-          >
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <span style={{ fontSize: '14px', color: '#FFFFFF', fontWeight: 600 }}>
-                  {nurse.name}
-                </span>
-                <div
-                  className="rounded-full"
-                  style={{
-                    width: '8px',
-                    height: '8px',
-                    backgroundColor: getFatigueColor(nurse.fatigue),
-                  }}
-                />
+        {nurses.map((nurse) => {
+          const isHighFatigue = nurse.fatigue > 80;
+          const isCriticalFatigue = nurse.fatigue > 95;
+          
+          return (
+            <div
+              key={nurse.id}
+              className={`cursor-pointer transition-all hover:border-[#00D4FF] ${isCriticalFatigue ? 'animate-pulse' : ''}`}
+              style={{
+                backgroundColor: '#111827',
+                borderRadius: '8px',
+                padding: '12px',
+                border: isCriticalFatigue ? '2px solid #FF3D5A' : '1px solid transparent',
+              }}
+              onClick={() => onNurseClick?.(nurse)}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span style={{ fontSize: '14px', color: '#FFFFFF', fontWeight: 600 }}>
+                    {nurse.name}
+                  </span>
+                  {isCriticalFatigue && (
+                    <AlertCircle size={14} style={{ color: '#FF3D5A' }} />
+                  )}
+                  {isHighFatigue && !isCriticalFatigue && (
+                    <AlertTriangle size={14} style={{ color: '#FF6B35' }} />
+                  )}
+                  <div
+                    className="rounded-full"
+                    style={{
+                      width: '8px',
+                      height: '8px',
+                      backgroundColor: getFatigueColor(nurse.fatigue),
+                    }}
+                  />
+                </div>
+                {isCriticalFatigue && (
+                  <span style={{ fontSize: '10px', color: '#FF3D5A', fontWeight: 600 }}>
+                    OVERTIME RISK
+                  </span>
+                )}
               </div>
-            </div>
             <div className="flex items-center gap-2">
               <span
                 className="px-2 py-1 rounded text-xs"
@@ -108,7 +124,8 @@ export function StaffList({ nurses, onNurseClick }: StaffListProps) {
               </span>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
