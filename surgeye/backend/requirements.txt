@@ -1,8 +1,10 @@
 # SurgEye Backend Dependencies
 # Python 3.8+ required
 
-# Core ML & Computer Vision
-ultralytics>=8.0.0
+# Roboflow Inference API
+inference>=0.9.0
+
+# Core Computer Vision
 opencv-python>=4.8.0
 numpy>=1.24.0
 
@@ -15,6 +17,5 @@ websockets>=11.0
 python-multipart>=0.0.6
 pillow>=10.0.0
 
-# Optional: For ONNX export (faster CPU inference)
-# onnx>=1.14.0
-# onnxruntime>=1.15.0
+# Optional: Local YOLOv8 (fallback)
+# ultralytics>=8.0.0

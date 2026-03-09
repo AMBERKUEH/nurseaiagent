@@ -1,27 +1,35 @@
 """
 SurgEye: Surgical Instrument Detection Module
-Core inference loop using YOLOv8 for real-time instrument detection.
+Core inference loop using Roboflow Inference API with Abhinav's pretrained model.
 """
 
-from ultralytics import YOLO
+from inference import get_model
 import cv2
 import numpy as np
 from typing import List, Dict, Tuple, Any
 
-# Surgical instrument classes (expand based on your dataset)
+# Roboflow API Configuration
+ROBOFLOW_API_KEY = "bX5IkiMxH6IOh59gH6Ku"
+MODEL_ID = "abhinav-ytcui/surgical-instruments-zmagm/1"
+
+# Surgical instrument classes from Abhinav's model
 CLASSES = [
-    'forceps', 'scissors', 'retractor', 'clamp', 'needle_holder',
-    'scalpel', 'surgical_sponge', 'gauze', 'towel_clip', 'hemostat'
+    'Army_navy', 'Bulldog', 'Castroviejo', 'Forceps',
+    'Frazier', 'Hemostat', 'IrisNeedle', 'Mayo_metz', 'Potts'
 ]
 
-# Load YOLOv8 model (auto-downloads if not present)
-# For CPU-only: model = YOLO('yolov8s.onnx') after exporting
-model = YOLO('yolov8s.pt')
+# Load Roboflow pretrained model
+print("[SurgEye] Loading Roboflow surgical instruments model...")
+model = get_model(
+    model_id=MODEL_ID,
+    api_key=ROBOFLOW_API_KEY
+)
+print("[SurgEye] Model loaded successfully!")
 
 
 def detect_frame(frame: np.ndarray, conf_threshold: float = 0.4) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
     """
-    Detect surgical instruments in a single frame.
+    Detect surgical instruments in a single frame using Roboflow Inference API.
     
     Args:
         frame: Input image/frame (numpy array)
@@ -30,24 +38,49 @@ def detect_frame(frame: np.ndarray, conf_threshold: float = 0.4) -> Tuple[np.nda
     Returns:
         Tuple of (annotated_frame, detections_list)
     """
-    # Run inference
-    results = model(frame, conf=conf_threshold)[0]
+    # Run inference with Roboflow
+    results = model.infer(frame)[0]
     
     detections = []
-    for box in results.boxes:
-        class_id = int(box.cls)
-        class_name = CLASSES[class_id] if class_id < len(CLASSES) else f'class_{class_id}'
+    annotated = frame.copy()
+    
+    for pred in results.predictions:
+        # Filter by confidence threshold
+        if pred.confidence < conf_threshold:
+            continue
+            
+        # Calculate bounding box coordinates
+        x1 = int(pred.x - pred.width / 2)
+        y1 = int(pred.y - pred.height / 2)
+        x2 = int(pred.x + pred.width / 2)
+        y2 = int(pred.y + pred.height / 2)
         
         detection = {
-            'class': class_name,
-            'confidence': round(float(box.conf), 2),
-            'bbox': box.xyxy[0].tolist(),  # [x1, y1, x2, y2]
-            'center': box.xywh[0][:2].tolist()  # [cx, cy]
+            'class': pred.class_name,
+            'confidence': round(pred.confidence, 2),
+            'bbox': [x1, y1, x2, y2],
+            'center': [int(pred.x), int(pred.y)]
         }
         detections.append(detection)
-    
-    # Get annotated frame with bounding boxes
-    annotated = results.plot()
+        
+        # Draw bounding box
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 200), 2)
+        
+        # Draw label
+        label = f"{pred.class_name} {pred.confidence:.0%}"
+        label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
+        label_y = y1 - 10 if y1 - 10 > 10 else y1 + 20
+        
+        # Label background
+        cv2.rectangle(annotated, 
+                     (x1, label_y - label_size[1] - 4),
+                     (x1 + label_size[0], label_y + 4),
+                     (0, 255, 200), -1)
+        
+        # Label text
+        cv2.putText(annotated, label,
+                   (x1, label_y),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
     
     return annotated, detections
 
