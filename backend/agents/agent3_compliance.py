@@ -131,6 +131,26 @@ class ComplianceAgent:
                 if len(assigned) != len(set(assigned)):
                     violations.append(f"{day} {shift} contains duplicate nurse assignment")
 
+        # Overtime protection — track weekly hours (Malaysian labour law: 40hr max)
+        SHIFT_HOURS = {"morning": 8, "afternoon": 8, "night": 8}
+        MAX_WEEKLY_HOURS = 40
+        weekly_hours = {n["name"]: 0 for n in nurses}
+        
+        for day in schedule:
+            for shift in ["morning", "afternoon", "night"]:
+                for nurse in schedule[day][shift]:
+                    weekly_hours[nurse] = weekly_hours.get(nurse, 0) + SHIFT_HOURS[shift]
+        
+        for nurse, hours in weekly_hours.items():
+            if hours > MAX_WEEKLY_HOURS:
+                violations.append(
+                    f"{nurse} exceeds 40-hour weekly limit ({hours}hrs) — unsafe for patient care"
+                )
+            elif hours > 36:  # Warning threshold
+                violations.append(
+                    f"{nurse} approaching overtime limit ({hours}/40hrs) — monitor closely"
+                )
+
         violations = list(set(violations))
         passed = len(violations) == 0
         score = max(0, int((1 - len(violations) / total_rules) * 100))
@@ -138,7 +158,12 @@ class ComplianceAgent:
         return {
             "passed": passed,
             "violations": violations,
-            "compliance_score": score
+            "compliance_score": score,
+            "weekly_hours": weekly_hours,
+            "overtime_risk": [
+                {"nurse": n, "hours": h, "status": "OVERTIME" if h > 40 else "WARNING" if h > 36 else "OK"}
+                for n, h in weekly_hours.items()
+            ]
         }
 
     def suggest_fix(self, violation):

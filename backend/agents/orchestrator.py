@@ -112,16 +112,49 @@ class Orchestrator:
         
         print(f"   ✓ Found {len(alerts)} alerts")
         
-        # Compile final result
+        # Calculate dynamic fatigue scores based on actual schedule
+        print("\n  📊 Calculating fatigue scores...")
+        nurse_fatigue = {}
+        for nurse in nurses:
+            name = nurse["name"]
+            shifts_this_week = sum(
+                1 for day in schedule 
+                for shift in ["morning", "afternoon", "night"] 
+                if name in schedule[day][shift]
+            )
+            night_shifts = sum(
+                1 for day in schedule 
+                if name in schedule[day]["night"]
+            )
+            # Fatigue score: 0-100 based on shifts + night shifts
+            fatigue_score = min(100, (shifts_this_week * 12) + (night_shifts * 8))
+            nurse_fatigue[name] = {
+                "score": fatigue_score,
+                "shifts": shifts_this_week,
+                "night_shifts": night_shifts
+            }
+            print(f"    {name}: {fatigue_score}/100 ({shifts_this_week} shifts, {night_shifts} nights)")
+        
+        # Compile final result with all real data
         result = {
             "schedule": schedule,
             "staffing_requirements": staffing_requirements,
             "compliance": {
                 "status": compliance_status,
                 "reasons": compliance_reasons,
-                "score": compliance_result.get("compliance_score", 0)
+                "score": compliance_result.get("compliance_score", 0),
+                "weekly_hours": compliance_result.get("weekly_hours", {}),
+                "overtime_risk": compliance_result.get("overtime_risk", [])
             },
-            "alerts": alerts
+            "alerts": alerts,
+            "fatigue_scores": nurse_fatigue,
+            "agent_activity": [
+                {"agent": "BrightData", "message": f"Fetched external signals for Shenzhen", "type": "INFO"},
+                {"agent": "Forecast", "message": f"Predicted staffing requirements based on historical data", "type": "INFO"},
+                {"agent": "Scheduling", "message": f"Generated schedule for {len(nurses)} nurses across 7 days", "type": "SUCCESS"},
+                {"agent": "Compliance", "message": f"Compliance check: {compliance_status} ({len(compliance_reasons)} violations)", "type": "SUCCESS" if compliance_status == "PASSED" else "WARNING"},
+                {"agent": "Emergency", "message": f"Found {len(alerts)} potential issues", "type": "WARNING" if alerts else "SUCCESS"}
+            ]
         }
         
         print("\n" + "=" * 70)

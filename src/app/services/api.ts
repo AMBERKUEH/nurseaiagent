@@ -54,8 +54,16 @@ export async function generateSchedule(
 ): Promise<{
   schedule: any;
   staffing_requirements: any;
-  compliance: { status: string; reasons: string[]; score: number };
+  compliance: { 
+    status: string; 
+    reasons: string[]; 
+    score: number;
+    weekly_hours: Record<string, number>;
+    overtime_risk: Array<{nurse: string; hours: number; status: string}>;
+  };
   alerts: string[];
+  fatigue_scores: Record<string, {score: number; shifts: number; night_shifts: number}>;
+  agent_activity: Array<{agent: string; message: string; type: string}>;
 } | null> {
   try {
     const body: any = { nurses };
@@ -183,7 +191,13 @@ export async function explainNurse(
 export async function updateSchedule(
   currentSchedule: any,
   disruption: string
-): Promise<{ schedule: any; alerts: string[] } | null> {
+): Promise<{ 
+  schedule: any; 
+  alerts: string[]; 
+  action_taken: string;
+  severity: string;
+  updated_schedule: any;
+} | null> {
   try {
     const response = await fetch(`${API_BASE}/api/update-schedule`, {
       method: 'POST',

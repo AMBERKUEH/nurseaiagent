@@ -431,11 +431,15 @@ def handle_emergency(request: EmergencyRequest):
         result = emergency_agent.handle(request.disruption, schedule_list, nurses)
         print(f"  ✓ Emergency handled, severity: {result.get('severity', 'UNKNOWN')}")
         
+        action_taken = result.get("action_taken", "No action needed")
+        
         return {
-            "alerts": [result.get("action_taken", "")] if result.get("action_taken") else [],
-            "reassignments": [result.get("action_taken", "")] if result.get("action_taken") else [],
+            "alerts": [action_taken] if action_taken else [],
+            "reassignments": [action_taken] if action_taken else [],
             "updated_schedule": result.get("updated_schedule", schedule_list),
-            "severity": result.get("severity", "LOW")
+            "severity": result.get("severity", "LOW"),
+            "action_taken": action_taken,
+            "schedule": request.current_schedule  # Return original schedule for compatibility
         }
     except Exception as e:
         print(f"  ✗ EmergencyAgent failed: {e}")
