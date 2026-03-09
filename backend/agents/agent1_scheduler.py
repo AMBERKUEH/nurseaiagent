@@ -27,10 +27,10 @@ def call_llm(prompt: str) -> str:
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",  # Better quality for complex JSON
         messages=[
-            {"role": "system", "content": "You are an expert nurse scheduling AI for a hospital."},
+            {"role": "system", "content": "You are an expert nurse scheduling AI for a Malaysian hospital following KKM guidelines."},
             {"role": "user", "content": prompt}
         ],
-        temperature=0.3,
+        temperature=0.1,  # Lower temperature for strict rule-following
         max_tokens=2048
     )
     
@@ -47,9 +47,12 @@ class SchedulingAgent:
         staffing_requirements: Dict[str, int]
     ) -> Dict[str, Dict[str, List[str]]]:
         """Generate a weekly schedule for nurses."""
-        prompt = f"""You are an expert nurse scheduling AI for a hospital.
+        prompt = f"""You are scheduling nurses for a Malaysian hospital following Kementerian Kesihatan Malaysia (KKM) rostering guidelines.
 
-Generate an optimal weekly nurse schedule.
+SHIFT NAMES TO USE:
+- "morning" (AM 7am-3pm)
+- "afternoon" (DA 3pm-11pm)
+- "night" (EV 11pm-7am)
 
 NURSES:
 {json.dumps(nurses, indent=2, ensure_ascii=False)}
@@ -60,21 +63,53 @@ RULES:
 STAFFING REQUIREMENTS (min nurses per shift):
 {json.dumps(staffing_requirements, indent=2, ensure_ascii=False)}
 
-CONSTRAINTS:
-- Respect unavailable_days - do NOT schedule on those days
-- Do NOT exceed max_shifts_per_week
-- Meet minimum staffing requirements per shift
-- Distribute shifts fairly
-- Consider skill levels (N4 > N3 > N2 > N1)
+MANDATORY RULES YOU MUST FOLLOW:
+
+1. EVERY NURSE MUST HAVE EXACTLY 1 DAY OFF (DO)
+   - Each nurse must have exactly 1 day with NO shifts assigned
+   - This is their DO (day off) - mandatory under Malaysian labour law
+
+2. NIGHT SHIFT PATTERN (EV SHIFTS)
+   - If assigning night shifts to a nurse, assign EXACTLY 3 CONSECUTIVE nights
+   - After 3 consecutive nights, the next day must be SD (sleeping day - no shifts)
+   - Then the following day must be DO (day off - no shifts)
+   - Pattern: EV + EV + EV + SD + DO
+
+3. CONSECUTIVE SHIFT LIMITS
+   - Never assign more than 3 consecutive morning-only shifts to one nurse
+   - Never assign more than 3 consecutive afternoon-only shifts to one nurse
+   - Break the pattern with a different shift type or day off
+
+4. MINIMUM 3 NURSES PER SHIFT
+   - Each shift must have at least 3 nurses assigned
+   - No exceptions - patient safety requirement
+
+5. SENIOR NURSE RATIO (55% MINIMUM)
+   - Each shift must have at least 55% senior nurses (skill level N3 or N4)
+   - Calculate: (number of N3+N4 nurses) / (total nurses in shift) >= 0.55
+   - Round up - if 3 nurses needed, at least 2 must be senior
+
+6. RESPECT UNAVAILABLE DAYS
+   - Never assign shifts on days marked in unavailable_days
+   - These are the nurse's confirmed days off
+
+7. MAXIMUM 5 SHIFTS PER WEEK
+   - No nurse can work more than 5 shifts total per week
+   - This includes all shift types combined
+
+8. FAIR DISTRIBUTION
+   - Distribute shifts across ALL nurses fairly
+   - Don't overload some nurses while others have minimal shifts
+   - Consider skill levels when assigning (N4 > N3 > N2 > N1 for complex cases)
 
 OUTPUT: Return ONLY valid JSON with this structure:
 {{
-  "Monday": {{"morning": ["name1", "name2"], "afternoon": ["name3"], "night": ["name4"]}},
+  "Monday": {{"morning": ["name1", "name2", "name3"], "afternoon": ["name4", "name5", "name6"], "night": ["name7", "name8", "name9"]}},
   "Tuesday": {{"morning": [], "afternoon": [], "night": []}},
   ... through Sunday
 }}
 
-No explanation, only JSON."""
+Ensure ALL 7 days are included. No explanation, only JSON."""
         
         response = call_llm(prompt)
         

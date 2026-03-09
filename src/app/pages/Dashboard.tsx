@@ -78,9 +78,16 @@ export default function Dashboard() {
             memory_insights: result.alerts || []
           });
           
-          // Calculate dynamic fatigue scores from schedule
+          // Build real activity log from API response
+          const newActivityLog: ActivityLogItem[] = [];
+          const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          
+          // Calculate dynamic fatigue scores and overtime status from schedule
           if (result.schedule && nursesData) {
             const parsedNurses = JSON.parse(nursesData);
+            const weeklyHours = result.compliance?.weekly_hours || {};
+            const overtimeRisk = result.compliance?.overtime_risk || [];
+            
             const updatedNurses = parsedNurses.map((nurse: any) => {
               const name = nurse.name;
               let totalShifts = 0;
@@ -99,22 +106,50 @@ export default function Dashboard() {
               // Calculate fatigue: (total * 12) + (nights * 8), capped at 100
               const fatigueScore = Math.min(100, (totalShifts * 12) + (nightShifts * 8));
               
+              // Get weekly hours and determine overtime status
+              const hours = weeklyHours[name] || 0;
+              let overtimeStatus = 'OK';
+              if (hours > 40) {
+                overtimeStatus = 'BLOCKED';
+              } else if (hours > 36) {
+                overtimeStatus = 'WARNING';
+              }
+              
               return {
                 ...nurse,
                 fatigue_score: fatigueScore,
                 total_shifts: totalShifts,
-                night_shifts: nightShifts
+                night_shifts: nightShifts,
+                weekly_hours: hours,
+                overtime_status: overtimeStatus
               };
             });
             
             setNurses(updatedNurses);
-            // Update localStorage with new fatigue scores
+            // Update localStorage with new fatigue scores and overtime status
             localStorage.setItem('nurses', JSON.stringify(updatedNurses));
+            
+            // Add overtime alerts to activity log
+            const blockedNurses = updatedNurses.filter((n: any) => n.overtime_status === 'BLOCKED');
+            
+            if (blockedNurses.length > 0) {
+              blockedNurses.forEach((nurse: any) => {
+                newActivityLog.push({
+                  tag: 'COMPLIANCE',
+                  message: `${nurse.name} blocked from further shifts — 40hr limit reached`,
+                  time: currentTime
+                });
+              });
+            }
+            
+            if (overtimeRisk.length > 0) {
+              newActivityLog.push({
+                tag: 'COMPLIANCE',
+                message: `Overtime alert: ${overtimeRisk.join(', ')} approaching 40hr weekly limit`,
+                time: currentTime
+              });
+            }
           }
-          
-          // Build real activity log from API response
-          const newActivityLog: ActivityLogItem[] = [];
-          const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
           
           // [FORECAST] message with staffing numbers
           if (result.staffing_requirements) {

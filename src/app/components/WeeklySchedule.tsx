@@ -151,12 +151,12 @@ export function WeeklySchedule({ nurses, schedule, staffingRequirements, highlig
                         )}
                         {shiftNurses.map((nurse) => {
                           const ward = nurse.ward;
-                          const isBlocked = (nurse as any).weekly_hours > 40;
+                          const isBlocked = (nurse as any).overtime_status === 'BLOCKED';
                           
                           return (
                             <div
                               key={nurse.id}
-                              className="px-2 py-1 rounded text-xs whitespace-nowrap"
+                              className={`px-2 py-1 rounded text-xs whitespace-nowrap ${isBlocked ? 'opacity-40' : ''}`}
                               style={{
                                 backgroundColor: isBlocked ? '#6B728033' : `${wardColors[ward]}33`,
                                 color: isBlocked ? '#6B7280' : wardColors[ward],

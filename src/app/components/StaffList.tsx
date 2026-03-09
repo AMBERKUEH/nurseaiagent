@@ -100,30 +100,51 @@ export function StaffList({ nurses, onNurseClick }: StaffListProps) {
                   </span>
                 )}
               </div>
-            <div className="flex items-center gap-2">
-              <span
-                className="px-2 py-1 rounded text-xs"
-                style={{
-                  backgroundColor: skillColors[nurse.skillLevel],
-                  color: '#FFFFFF',
-                  fontSize: '11px',
-                  fontWeight: 600,
-                }}
-              >
-                {skillLabels[nurse.skillLevel]}
-              </span>
-              <span
-                className="px-2 py-1 rounded text-xs"
-                style={{
-                  backgroundColor: `${wardColors[nurse.ward]}20`,
-                  color: wardColors[nurse.ward],
-                  fontSize: '11px',
-                }}
-              >
-                {nurse.ward}
-              </span>
+              
+              {/* Overtime Status Badge */}
+              {(nurse as any).overtime_status === 'BLOCKED' && (
+                <div 
+                  className="mb-2 px-2 py-1 rounded text-xs flex items-center gap-1"
+                  style={{ backgroundColor: '#FF3D5A20', color: '#FF3D5A', fontSize: '10px', fontWeight: 600 }}
+                >
+                  <span>⛔</span>
+                  <span>MAX HOURS REACHED</span>
+                </div>
+              )}
+              {(nurse as any).overtime_status === 'WARNING' && (
+                <div 
+                  className="mb-2 px-2 py-1 rounded text-xs flex items-center gap-1"
+                  style={{ backgroundColor: '#FF6B3520', color: '#FF6B35', fontSize: '10px', fontWeight: 600 }}
+                >
+                  <span>⚠</span>
+                  <span>Near Limit ({(nurse as any).weekly_hours || 0}hrs/40)</span>
+                </div>
+              )}
+              
+              <div className="flex items-center gap-2">
+                <span
+                  className="px-2 py-1 rounded text-xs"
+                  style={{
+                    backgroundColor: skillColors[nurse.skillLevel],
+                    color: '#FFFFFF',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                  }}
+                >
+                  {skillLabels[nurse.skillLevel]}
+                </span>
+                <span
+                  className="px-2 py-1 rounded text-xs"
+                  style={{
+                    backgroundColor: `${wardColors[nurse.ward]}20`,
+                    color: wardColors[nurse.ward],
+                    fontSize: '11px',
+                  }}
+                >
+                  {nurse.ward}
+                </span>
+              </div>
             </div>
-          </div>
           );
         })}
       </div>

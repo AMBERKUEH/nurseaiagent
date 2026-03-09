@@ -41,129 +41,156 @@ class ComplianceAgent:
     """Checks schedule for compliance violations."""
 
     def check(self, schedule, nurses):
-        """Check schedule compliance and return violations."""
+        """Check schedule compliance with Malaysian hospital rostering rules."""
         violations = []
-        rules_passed = 0
-        total_rules = 9
+        warnings = []
+        total_rules = 12
 
-        # Track shifts
-        shift_counts = {n["name"]: 0 for n in nurses}
-        night_counts = {n["name"]: [] for n in nurses}
-        nurse_skills = {n["name"]: n["skill"] for n in nurses}
-
+        # Map shift types: AM=morning, DA=afternoon, EV=night
+        SHIFT_MAP = {"morning": "AM", "afternoon": "DA", "night": "EV"}
+        SHIFT_HOURS = {"morning": 8, "afternoon": 8, "night": 8}
+        MAX_WEEKLY_HOURS = 40
+        
         days = list(schedule.keys())
-
-        # Rule 1 + 2 + 3 checks
+        nurse_skills = {n["name"]: n["skill"] for n in nurses}
+        all_nurse_names = [n["name"] for n in nurses]
+        
+        # Track data structures
+        weekly_hours = {n: 0 for n in all_nurse_names}
+        day_off_compliance = {n: True for n in all_nurse_names}  # Start True, set False if working
+        nurse_shifts_by_day = {n: {} for n in all_nurse_names}  # {nurse: {day_index: shift_type}}
+        
+        # Build nurse schedule tracking
         for d_index, day in enumerate(days):
             for shift in ["morning", "afternoon", "night"]:
                 assigned = schedule[day][shift]
-
-                # rule: minimum nurses
-                if len(assigned) < 2:
-                    violations.append(f"{day} {shift} has less than 2 nurses")
-
+                
+                # Rule 6: Minimum 3 nurses per shift
+                if len(assigned) < 3:
+                    violations.append(f"{day} {shift} has only {len(assigned)} nurses — minimum 3 required")
+                
                 for nurse in assigned:
-                    shift_counts[nurse] += 1
-
-                    # rule: ICU skill
-                    if "ICU" in day.upper():
-                        if nurse_skills[nurse] not in ["N3", "N4"]:
-                            violations.append(f"{nurse} not qualified for ICU")
-
-                    # track nights
-                    if shift == "night":
-                        night_counts[nurse].append(d_index)
-
-        # rule: max 5 shifts
-        for nurse, count in shift_counts.items():
-            if count > 5:
-                violations.append(f"{nurse} assigned {count} shifts")
-
-        # rule: consecutive nights
-        for nurse, nights in night_counts.items():
-            nights.sort()
-            streak = 1
-            for i in range(1, len(nights)):
-                if nights[i] == nights[i - 1] + 1:
-                    streak += 1
-                    if streak > 2:
-                        violations.append(f"{nurse} works >2 consecutive nights")
-                else:
+                    # Track weekly hours
+                    weekly_hours[nurse] += SHIFT_HOURS[shift]
+                    
+                    # Track shifts by day for pattern checking
+                    if d_index not in nurse_shifts_by_day[nurse]:
+                        nurse_shifts_by_day[nurse][d_index] = []
+                    nurse_shifts_by_day[nurse][d_index].append(shift)
+                    
+                    # Mark as working this day (not a day off)
+                    day_off_compliance[nurse] = False
+        
+        # Rule 1: NIGHT SHIFT PATTERN (EV shifts)
+        # If nurse works EV, must be exactly 3 consecutive EV, then SD+DO
+        for nurse in all_nurse_names:
+            night_days = sorted([d for d, shifts in nurse_shifts_by_day[nurse].items() 
+                                if "night" in shifts])
+            
+            if night_days:
+                # Check for consecutive night patterns
+                i = 0
+                while i < len(night_days):
+                    # Find consecutive night streak
+                    streak_start = i
+                    streak_len = 1
+                    while i + 1 < len(night_days) and night_days[i + 1] == night_days[i] + 1:
+                        streak_len += 1
+                        i += 1
+                    
+                    # Check if this is a 3-night streak
+                    if streak_len == 3:
+                        last_night_day = night_days[streak_start + streak_len - 1]
+                        # Check next 2 days are SD (no shifts) then DO (no shifts)
+                        day_after_nights = last_night_day + 1
+                        two_days_after = last_night_day + 2
+                        
+                        # SD = sleeping day (no shifts assigned)
+                        has_sd = (day_after_nights < len(days) and 
+                                  len(nurse_shifts_by_day[nurse].get(day_after_nights, [])) == 0)
+                        # DO = day off (no shifts assigned)  
+                        has_do = (two_days_after < len(days) and 
+                                  len(nurse_shifts_by_day[nurse].get(two_days_after, [])) == 0)
+                        
+                        if not (has_sd and has_do):
+                            violations.append(f"{nurse} missing mandatory SD+DO recovery after EV shifts")
+                    elif streak_len != 3 and streak_len > 0:
+                        # Night shifts must be in groups of exactly 3
+                        violations.append(
+                            f"{nurse} assigned {streak_len} consecutive EV night shifts — "
+                            f"Malaysian KKM guidelines require exactly 3 consecutive EV shifts "
+                            f"followed by mandatory SD+DO recovery"
+                        )
+                    
+                    i += 1
+        
+        # Rule 2: WEEKLY DAY OFF (DO)
+        # Every nurse must have exactly 1 DO per week
+        for nurse in all_nurse_names:
+            working_days = len([d for d in range(len(days)) 
+                               if len(nurse_shifts_by_day[nurse].get(d, [])) > 0])
+            if working_days == 7:
+                violations.append(f"{nurse} has no DO (day off) this week — violates Malaysian labour requirements")
+                day_off_compliance[nurse] = False
+            elif working_days == 6:
+                day_off_compliance[nurse] = True  # Has exactly 1 day off
+        
+        # Rule 3: SAME SHIFT CONSECUTIVE LIMIT
+        # No more than 3 consecutive AM or DA shifts
+        for nurse in all_nurse_names:
+            for shift_type in ["morning", "afternoon"]:
+                shift_days = sorted([d for d, shifts in nurse_shifts_by_day[nurse].items() 
+                                    if shift_type in shifts])
+                
+                if len(shift_days) >= 3:
+                    # Check for more than 3 consecutive
                     streak = 1
-
-        # rule: no double shifts same day
-        daily_counts = {}
-        for day in schedule:
-            for shift in schedule[day]:
-                for nurse in schedule[day][shift]:
-                    daily_counts.setdefault((nurse, day), 0)
-                    daily_counts[(nurse, day)] += 1
-
-        for (nurse, day), count in daily_counts.items():
-            if count > 1:
-                violations.append(f"{nurse} assigned multiple shifts on {day}")
-
-        # rule: rest after night shift (no morning next day)
-        for nurse, nights in night_counts.items():
-            for night_index in nights:
-                next_day = night_index + 1
-                if next_day < len(days):
-                    next_day_name = days[next_day]
-                    if nurse in schedule[next_day_name]["morning"]:
-                        violations.append(f"{nurse} works night then morning next day")
-
-        # rule: max 3 night shifts per week
-        for nurse, nights in night_counts.items():
-            if len(nights) > 3:
-                violations.append(f"{nurse} assigned too many night shifts")
-
-        # rule: shift must include at least one senior nurse (N3 or N4)
-        for day in schedule:
-            for shift in schedule[day]:
-                assigned = schedule[day][shift]
-                if not any(nurse_skills[n] in ["N3", "N4"] for n in assigned):
-                    violations.append(f"{day} {shift} has no senior nurse")
-
-        # rule: no duplicate nurse in same shift
-        for day in schedule:
-            for shift in schedule[day]:
-                assigned = schedule[day][shift]
-                if len(assigned) != len(set(assigned)):
-                    violations.append(f"{day} {shift} contains duplicate nurse assignment")
-
-        # Overtime protection — track weekly hours (Malaysian labour law: 40hr max)
-        SHIFT_HOURS = {"morning": 8, "afternoon": 8, "night": 8}
-        MAX_WEEKLY_HOURS = 40
-        weekly_hours = {n["name"]: 0 for n in nurses}
+                    for i in range(1, len(shift_days)):
+                        if shift_days[i] == shift_days[i-1] + 1:
+                            streak += 1
+                            if streak > 3:
+                                shift_label = "AM" if shift_type == "morning" else "DA"
+                                violations.append(f"{nurse} exceeds 3 consecutive {shift_label} shifts")
+                                break
+                        else:
+                            streak = 1
         
-        for day in schedule:
+        # Rule 4: SENIOR/JUNIOR RATIO (minimum 55% senior N3/N4)
+        for day in days:
             for shift in ["morning", "afternoon", "night"]:
-                for nurse in schedule[day][shift]:
-                    weekly_hours[nurse] = weekly_hours.get(nurse, 0) + SHIFT_HOURS[shift]
+                assigned = schedule[day][shift]
+                if len(assigned) > 0:
+                    senior_count = sum(1 for n in assigned if nurse_skills.get(n) in ["N3", "N4"])
+                    senior_pct = (senior_count / len(assigned)) * 100
+                    
+                    if senior_pct < 55:
+                        violations.append(f"{day} {shift} has only {senior_pct:.0f}% senior nurses — minimum 55% required")
         
+        # Rule 5: WEEKLY HOURS (max 40)
+        overtime_risk = []
         for nurse, hours in weekly_hours.items():
             if hours > MAX_WEEKLY_HOURS:
-                violations.append(
-                    f"{nurse} exceeds 40-hour weekly limit ({hours}hrs) — unsafe for patient care"
-                )
-            elif hours > 36:  # Warning threshold
-                violations.append(
-                    f"{nurse} approaching overtime limit ({hours}/40hrs) — monitor closely"
-                )
-
-        violations = list(set(violations))
+                violations.append(f"{nurse} works {hours}hrs this week — exceeds 40hr limit")
+                overtime_risk.append(nurse)
+            elif hours > 36:
+                warnings.append(f"{nurse} at {hours}hrs — approaching 40hr limit")
+                overtime_risk.append(nurse)
+        
+        # Remove duplicates while preserving order
+        violations = list(dict.fromkeys(violations))
+        warnings = list(dict.fromkeys(warnings))
+        
         passed = len(violations) == 0
         score = max(0, int((1 - len(violations) / total_rules) * 100))
 
         return {
             "passed": passed,
             "violations": violations,
+            "warnings": warnings,
             "compliance_score": score,
             "weekly_hours": weekly_hours,
-            "overtime_risk": [
-                {"nurse": n, "hours": h, "status": "OVERTIME" if h > 40 else "WARNING" if h > 36 else "OK"}
-                for n, h in weekly_hours.items()
-            ]
+            "overtime_risk": overtime_risk,
+            "day_off_compliance": day_off_compliance
         }
 
     def suggest_fix(self, violation):

@@ -62,11 +62,17 @@ class Orchestrator:
         print("ORCHESTRATOR: Running Full Scheduling Pipeline")
         print("=" * 70)
         
-        # Step 1: BrightDataAgent - Get external signals
+        # Step 1: BrightDataAgent - Get external signals (skip for faster testing)
         print("\n[Step 1/5] BrightDataAgent: Fetching real-world signals...")
         try:
-            external_signals = self.brightdata_agent.get_external_signals("Shenzhen")
-            print(f"   ✓ External signals: {external_signals.get('recommendation', 'No specific recommendation')}")
+            import os
+            # Skip BrightData if no API key or explicitly disabled
+            if not os.environ.get("BRIGHTDATA_API_KEY"):
+                print("   ⚠ No BRIGHTDATA_API_KEY, skipping external signals")
+                external_signals = None
+            else:
+                external_signals = self.brightdata_agent.get_external_signals("Kuala Lumpur")
+                print(f"   ✓ External signals: {external_signals.get('recommendation', 'No specific recommendation')}")
         except Exception as e:
             print(f"   ⚠ BrightData failed, continuing without external signals: {e}")
             external_signals = None
@@ -142,9 +148,11 @@ class Orchestrator:
             "compliance": {
                 "status": compliance_status,
                 "reasons": compliance_reasons,
+                "warnings": compliance_result.get("warnings", []),
                 "score": compliance_result.get("compliance_score", 0),
                 "weekly_hours": compliance_result.get("weekly_hours", {}),
-                "overtime_risk": compliance_result.get("overtime_risk", [])
+                "overtime_risk": compliance_result.get("overtime_risk", []),
+                "day_off_compliance": compliance_result.get("day_off_compliance", {})
             },
             "alerts": alerts,
             "fatigue_scores": nurse_fatigue,
@@ -274,10 +282,31 @@ if __name__ == "__main__":
         {"name": "Liu Yang", "skill": "N3", "ward": "ICU", "unavailable_days": []}
     ]
     
-    # Sample rules
+    # Malaysian hospital rules (KKM guidelines)
     sample_rules = {
         "max_shifts_per_week": 5,
-        "min_rest_hours": 12,
+        "min_nurses_per_shift": 3,
+        "shift_types": ["AM", "DA", "EV"],
+        "leave_types": ["SD", "DO"],
+        "night_shift_pattern": {
+            "consecutive_ev_shifts": 3,
+            "recovery_after": ["SD", "DO"],
+            "exception_consecutive": 4,
+            "exception_recovery": ["SD", "DO", "DO"]
+        },
+        "consecutive_same_shift_limit": 3,
+        "weekly_day_off": 1,
+        "senior_junior_ratio": {
+            "preferred": 0.60,
+            "minimum": 0.55
+        },
+        "assignment_priority": [
+            "honor_preapproved_requests",
+            "assign_ev_with_recovery",
+            "distribute_do_days",
+            "fill_am_da_shifts",
+            "gap_filling"
+        ],
         "ward_skill_requirements": {
             "ICU": "N3",
             "ER": "N3",
