@@ -10,6 +10,7 @@ from agent1_scheduler import SchedulingAgent
 from agent2_forecast import ForecastAgent
 from agent3_compliance import ComplianceAgent
 from agent4_emergency import EmergencyAgent
+from agent_brightdata import BrightDataAgent
 
 
 class Orchestrator:
@@ -27,7 +28,8 @@ class Orchestrator:
         self.scheduling_agent = SchedulingAgent()
         self.compliance_agent = ComplianceAgent()
         self.emergency_agent = EmergencyAgent()
-        print("Orchestrator initialized with all 4 agents")
+        self.brightdata_agent = BrightDataAgent()
+        print("Orchestrator initialized with all 5 agents")
     
     def run(
         self,
@@ -60,26 +62,35 @@ class Orchestrator:
         print("ORCHESTRATOR: Running Full Scheduling Pipeline")
         print("=" * 70)
         
-        # Step 1: ForecastAgent - Get staffing requirements
-        print("\n[Step 1/4] ForecastAgent: Predicting staffing requirements...")
+        # Step 1: BrightDataAgent - Get external signals
+        print("\n[Step 1/5] BrightDataAgent: Fetching real-world signals...")
+        try:
+            external_signals = self.brightdata_agent.get_external_signals("Shenzhen")
+            print(f"   ✓ External signals: {external_signals.get('recommendation', 'No specific recommendation')}")
+        except Exception as e:
+            print(f"   ⚠ BrightData failed, continuing without external signals: {e}")
+            external_signals = None
+        
+        # Step 2: ForecastAgent - Get staffing requirements (with real signals)
+        print("\n[Step 2/5] ForecastAgent: Predicting staffing requirements...")
         historical_data = self.forecast_agent.get_historical_data()
-        staffing_requirements = self.forecast_agent.predict(historical_data)
+        staffing_requirements = self.forecast_agent.predict(historical_data, external_signals=external_signals)
         print(f"   ✓ Staffing requirements: {staffing_requirements}")
         
-        # Step 2: SchedulingAgent - Generate schedule
-        print("\n[Step 2/4] SchedulingAgent: Generating schedule...")
+        # Step 3: SchedulingAgent - Generate schedule
+        print("\n[Step 3/5] SchedulingAgent: Generating schedule...")
         schedule = self.scheduling_agent.generate(nurses, rules, staffing_requirements)
         print(f"   ✓ Schedule generated for {len(schedule)} days")
         
-        # Step 3: ComplianceAgent - Check compliance
-        print("\n[Step 3/4] ComplianceAgent: Checking compliance...")
+        # Step 4: ComplianceAgent - Check compliance
+        print("\n[Step 4/5] ComplianceAgent: Checking compliance...")
         compliance_result = self.compliance_agent.check(schedule, nurses)
         compliance_status = "PASSED" if compliance_result.get("passed", False) else "FAILED"
         compliance_reasons = compliance_result.get("violations", [])
         print(f"   ✓ Compliance: {compliance_status} ({len(compliance_reasons)} violations)")
         
-        # Step 4: EmergencyAgent - Check for emergency conflicts
-        print("\n[Step 4/4] EmergencyAgent: Checking for emergency conflicts...")
+        # Step 5: EmergencyAgent - Check for emergency conflicts
+        print("\n[Step 5/5] EmergencyAgent: Checking for emergency conflicts...")
         # Convert schedule format for EmergencyAgent if needed
         schedule_list = self._convert_schedule_to_list(schedule, nurses)
         # Check each day for potential emergencies (simulated by passing empty disruption)

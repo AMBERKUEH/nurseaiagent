@@ -65,18 +65,21 @@ class ForecastAgent:
         
         return data
     
-    def predict(self, historical_data: List[Dict[str, Any]]) -> Dict[str, int]:
+    def predict(self, historical_data: List[Dict[str, Any]], external_signals=None) -> Dict[str, int]:
         """
-        Calculate staffing requirements based on historical patient averages.
+        Calculate staffing requirements based on historical patient averages
+        and real external signals from BrightData.
         
         Args:
             historical_data: List of dicts with 'day_of_week' and 'patient_count'
+            external_signals: Optional dict from BrightDataAgent with high_risk_days
         
         Returns:
             Dict mapping Monday-Sunday to minimum nurse counts:
                 - Above 100 average: 4 nurses
                 - 70-100 average: 3 nurses
                 - Below 70: 2 nurses
+                - Boosted by 1 on high-risk days from external signals
         """
         # Group patient counts by day of week
         day_totals = {
@@ -95,6 +98,12 @@ class ForecastAgent:
             if day in day_totals:
                 day_totals[day].append(count)
         
+        # Get high risk days from BrightData if available
+        high_risk_days = []
+        if external_signals:
+            high_risk_days = external_signals.get("high_risk_days", [])
+            print(f"  [ForecastAgent] BrightData signals: {external_signals.get('recommendation', 'No specific recommendation')}")
+        
         # Calculate averages and staffing requirements
         staffing_requirements = {}
         
@@ -111,6 +120,11 @@ class ForecastAgent:
                     min_nurses = 3
                 else:
                     min_nurses = 2
+                
+                # Boost staffing on BrightData high risk days
+                if day in high_risk_days:
+                    min_nurses = min(min_nurses + 1, 5)
+                    print(f"  [ForecastAgent] Boosted {day} staffing due to external signal")
                 
                 staffing_requirements[day] = min_nurses
             else:
