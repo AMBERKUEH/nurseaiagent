@@ -30,6 +30,12 @@ interface ScheduleData {
   memory_insights: string[];
 }
 
+interface ActivityLogItem {
+  tag: string;
+  message: string;
+  time: string;
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [selectedNurse, setSelectedNurse] = useState<Nurse | null>(null);
@@ -40,6 +46,8 @@ export default function Dashboard() {
   const [emergencyInput, setEmergencyInput] = useState('');
   const [emergencyResult, setEmergencyResult] = useState<any>(null);
   const [isProcessingEmergency, setIsProcessingEmergency] = useState(false);
+  const [activityLog, setActivityLog] = useState<ActivityLogItem[]>([]);
+  const [complianceFlash, setComplianceFlash] = useState(false);
 
   useEffect(() => {
     // Load data from localStorage
@@ -69,6 +77,60 @@ export default function Dashboard() {
             bright_data: null,
             memory_insights: result.alerts || []
           });
+          
+          // Build real activity log from API response
+          const newActivityLog: ActivityLogItem[] = [];
+          const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          
+          // [FORECAST] message with staffing numbers
+          if (result.staffing_requirements) {
+            const staffingStr = Object.entries(result.staffing_requirements)
+              .map(([day, count]) => `${day.slice(0, 3)} ${count}`)
+              .join(', ');
+            newActivityLog.push({
+              tag: 'FORECAST',
+              message: `Forecasted staffing: ${staffingStr}`,
+              time: currentTime
+            });
+          }
+          
+          // [COMPLIANCE] message from response
+          if (result.compliance) {
+            const complianceStatus = result.compliance.status;
+            const violationCount = result.compliance.reasons?.length || 0;
+            const score = result.compliance.score || 100;
+            newActivityLog.push({
+              tag: 'COMPLIANCE',
+              message: complianceStatus === 'PASSED' 
+                ? `PASSED — ${score}% rules met`
+                : `FAILED — ${violationCount} violations found`,
+              time: currentTime
+            });
+          }
+          
+          // [SCHEDULING] messages for each alert
+          if (result.alerts && result.alerts.length > 0) {
+            result.alerts.forEach((alert: string) => {
+              newActivityLog.push({
+                tag: 'SCHEDULING',
+                message: alert,
+                time: currentTime
+              });
+            });
+          }
+          
+          // Also add agent_activity messages if present
+          if (result.agent_activity && result.agent_activity.length > 0) {
+            result.agent_activity.forEach((activity: any) => {
+              newActivityLog.push({
+                tag: activity.agent?.toUpperCase() || 'INFO',
+                message: activity.message,
+                time: currentTime
+              });
+            });
+          }
+          
+          setActivityLog(newActivityLog);
         }
       } catch (err) {
         setError('Failed to load data');

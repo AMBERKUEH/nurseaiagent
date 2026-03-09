@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { Navbar } from '../components/Navbar';
 import { StaffList } from '../components/StaffList';
@@ -7,12 +7,135 @@ import { FatigueIndex } from '../components/FatigueIndex';
 import { ComplianceBar } from '../components/ComplianceBar';
 import { NurseModal } from '../components/NurseModal';
 import { AgentActivity } from '../components/AgentActivity';
-import { nurses, agentMessages, Nurse } from '../data/mockData';
-import { ArrowLeft, AlertTriangle } from 'lucide-react';
+import { Nurse, AgentMessage } from '../data/mockData';
+import { ArrowLeft, AlertTriangle, Loader2 } from 'lucide-react';
 
 export default function DashboardWithChat() {
   const navigate = useNavigate();
   const [selectedNurse, setSelectedNurse] = useState<Nurse | null>(null);
+  const [nurses, setNurses] = useState<Nurse[]>([]);
+  const [schedule, setSchedule] = useState<any>(null);
+  const [activityLog, setActivityLog] = useState<AgentMessage[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [complianceFlash, setComplianceFlash] = useState(false);
+  const [isCompliant, setIsCompliant] = useState(true);
+
+  useEffect(() => {
+    // Load data from localStorage
+    const loadData = () => {
+      try {
+        const nursesData = localStorage.getItem('nurses');
+        const scheduleResultStr = localStorage.getItem('scheduleResult');
+
+        if (nursesData) {
+          setNurses(JSON.parse(nursesData));
+        }
+
+        if (scheduleResultStr) {
+          const result = JSON.parse(scheduleResultStr);
+          setSchedule(result.schedule);
+          setIsCompliant(result.compliance?.status === 'PASSED');
+          
+          // Build real activity log from API response
+          const newActivityLog: AgentMessage[] = [];
+          const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          
+          // [FORECAST] message with staffing numbers
+          if (result.staffing_requirements) {
+            const staffingStr = Object.entries(result.staffing_requirements)
+              .map(([day, count]) => `${day.slice(0, 3)} ${count}`)
+              .join(', ');
+            newActivityLog.push({
+              id: Date.now().toString(),
+              type: 'FORECAST',
+              message: `Forecasted staffing: ${staffingStr}`,
+              timestamp: currentTime
+            });
+          }
+          
+          // [COMPLIANCE] message from response
+          if (result.compliance) {
+            const complianceStatus = result.compliance.status;
+            const violationCount = result.compliance.reasons?.length || 0;
+            const score = result.compliance.score || 100;
+            newActivityLog.push({
+              id: (Date.now() + 1).toString(),
+              type: 'COMPLIANCE',
+              message: complianceStatus === 'PASSED' 
+                ? `PASSED — ${score}% rules met`
+                : `FAILED — ${violationCount} violations found`,
+              timestamp: currentTime
+            });
+          }
+          
+          // [SCHEDULING] messages for each alert
+          if (result.alerts && result.alerts.length > 0) {
+            result.alerts.forEach((alert: string, idx: number) => {
+              newActivityLog.push({
+                id: (Date.now() + 2 + idx).toString(),
+                type: 'SCHEDULING',
+                message: alert,
+                timestamp: currentTime
+              });
+            });
+          }
+          
+          // Also add agent_activity messages if present
+          if (result.agent_activity && result.agent_activity.length > 0) {
+            result.agent_activity.forEach((activity: any, idx: number) => {
+              newActivityLog.push({
+                id: (Date.now() + 10 + idx).toString(),
+                type: activity.agent?.toUpperCase() || 'INFO',
+                message: activity.message,
+                timestamp: currentTime
+              });
+            });
+          }
+          
+          setActivityLog(newActivityLog);
+        }
+      } catch (err) {
+        console.error('Failed to load data', err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadData();
+  }, []);
+
+  // Handle emergency message from AgentActivity
+  const handleEmergencyMessage = (message: AgentMessage) => {
+    setActivityLog(prev => [message, ...prev].slice(0, 10)); // Keep max 10 items, newest first
+  };
+
+  // Handle schedule update from emergency
+  const handleScheduleUpdate = (newSchedule: any) => {
+    setSchedule(newSchedule);
+    // Update localStorage
+    const scheduleResultStr = localStorage.getItem('scheduleResult');
+    if (scheduleResultStr) {
+      const result = JSON.parse(scheduleResultStr);
+      result.schedule = newSchedule;
+      localStorage.setItem('scheduleResult', JSON.stringify(result));
+    }
+  };
+
+  // Handle high severity emergency
+  const handleHighSeverity = (severity: string) => {
+    if (severity === 'HIGH') {
+      setComplianceFlash(true);
+      setTimeout(() => setComplianceFlash(false), 3000);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#0A0F1E' }}>
+        <Loader2 size={48} className="animate-spin" style={{ color: '#00D4FF' }} />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#0A0F1E' }}>
@@ -68,19 +191,37 @@ export default function DashboardWithChat() {
         </div>
 
         {/* Compliance Bar */}
-        <ComplianceBar
-          isCompliant={true}
-          message="✓ SCHEDULE COMPLIANT — 100% RULES PASSED"
-        />
+        <div style={{
+          animation: complianceFlash ? 'flashRed 0.5s ease-in-out 6' : 'none'
+        }}>
+          <ComplianceBar
+            isCompliant={isCompliant && !complianceFlash}
+            message={isCompliant && !complianceFlash 
+              ? "✓ SCHEDULE COMPLIANT — 100% RULES PASSED" 
+              : "✗ VIOLATIONS DETECTED — CHECK ACTIVITY LOG"}
+          />
+        </div>
 
-        {/* Agent Activity Panel */}
-        <AgentActivity messages={agentMessages} />
+        {/* Agent Activity Panel with real data */}
+        <AgentActivity 
+          messages={activityLog}
+          schedule={schedule}
+          onScheduleUpdate={handleScheduleUpdate}
+          onEmergency={handleHighSeverity}
+        />
       </div>
 
       {/* Nurse Modal */}
       {selectedNurse && (
         <NurseModal nurse={selectedNurse} onClose={() => setSelectedNurse(null)} />
       )}
+      
+      <style>{`
+        @keyframes flashRed {
+          0%, 100% { border-color: transparent; }
+          50% { border: 2px solid #FF3D5A; }
+        }
+      `}</style>
     </div>
   );
 }
