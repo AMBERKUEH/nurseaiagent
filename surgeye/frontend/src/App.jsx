@@ -22,7 +22,7 @@ function App() {
   // Connect to WebSocket
   useEffect(() => {
     const connectWebSocket = () => {
-      wsRef.current = new WebSocket('ws://localhost:8000/ws')
+      wsRef.current = new WebSocket('ws://localhost:8002/ws')
       
       wsRef.current.onopen = () => {
         console.log('[SurgEye] Connected to server')
@@ -79,7 +79,7 @@ function App() {
   // Set baseline (pre-op)
   const setBaselineCount = useCallback(async () => {
     try {
-      const response = await fetch('http://localhost:8000/baseline', {
+      const response = await fetch('http://localhost:8002/baseline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       })
@@ -101,7 +101,7 @@ function App() {
   // Post-op check
   const performCheck = useCallback(async () => {
     try {
-      const response = await fetch('http://localhost:8000/check', {
+      const response = await fetch('http://localhost:8002/check', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       })
@@ -117,7 +117,7 @@ function App() {
   // Reset for new procedure
   const resetProcedure = useCallback(async () => {
     try {
-      await fetch('http://localhost:8000/reset', { method: 'POST' })
+      await fetch('http://localhost:8002/reset', { method: 'POST' })
       setProcedureStarted(false)
       setProcedureEnded(false)
       setCheckResult(null)
@@ -135,7 +135,7 @@ function App() {
   useEffect(() => {
     const fetchTimeline = async () => {
       try {
-        const response = await fetch('http://localhost:8000/timeline')
+        const response = await fetch('http://localhost:8002/timeline')
         const data = await response.json()
         setTimeline(data.timeline || [])
       } catch (error) {
@@ -145,7 +145,7 @@ function App() {
 
     const fetchScreenshots = async () => {
       try {
-        const response = await fetch('http://localhost:8000/alerts/screenshots')
+        const response = await fetch('http://localhost:8002/alerts/screenshots')
         const data = await response.json()
         setScreenshots(data.screenshots || [])
       } catch (error) {

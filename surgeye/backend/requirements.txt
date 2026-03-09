@@ -1,8 +1,8 @@
 # SurgEye Backend Dependencies
 # Python 3.8+ required
 
-# Roboflow Inference API
-inference>=0.9.0
+# Roboflow
+roboflow>=1.1.0
 
 # Core Computer Vision
 opencv-python>=4.8.0

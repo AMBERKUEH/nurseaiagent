@@ -13,13 +13,14 @@ from typing import Optional
 
 from detect import detect_frame, count_by_class, get_instrument_log, get_alert_screenshots
 from tracker import tracker
+from rostering_agent import trigger_rostering_alert
 
 app = FastAPI(title="SurgEye API", version="1.0.0")
 
 # Enable CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"],
+    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5176", "http://localhost:5177"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -98,6 +99,145 @@ async def get_screenshots():
     }
 
 
+@app.post("/scan-baseline")
+async def scan_baseline():
+    """
+    Phase 1: Pre-op scan - nurse points camera at instrument tray.
+    Captures 30 frames and takes most common detection as baseline.
+    """
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        return {"error": "Cannot open camera"}
+    
+    try:
+        # Warm up camera
+        for _ in range(5):
+            cap.read()
+        
+        # Capture 30 frames
+        all_detections = []
+        for i in range(30):
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            
+            # Resize for speed
+            frame = cv2.resize(frame, (640, 480))
+            
+            # Run detection
+            _, detections = detect_frame(frame, conf_threshold=0.5)
+            all_detections.extend(detections)
+            
+            await asyncio.sleep(0.033)  # ~30 FPS
+        
+        # Count occurrences per class
+        class_counts = {}
+        for d in all_detections:
+            cls = d['class']
+            class_counts[cls] = class_counts.get(cls, 0) + 1
+        
+        # Normalize: divide by 10 to get actual count (30 frames / 3 = ~10 samples)
+        baseline = {cls: max(1, count // 10) for cls, count in class_counts.items()}
+        
+        # Set baseline in tracker
+        tracker.set_baseline(baseline)
+        
+        # Save baseline image
+        ret, frame = cap.read()
+        if ret:
+            cv2.imwrite(f"baseline_{datetime.now().strftime('%H%M%S')}.jpg", frame)
+        
+        return {
+            "status": "baseline_locked",
+            "baseline": baseline,
+            "frames_captured": 30,
+            "total_detections": len(all_detections)
+        }
+        
+    finally:
+        cap.release()
+
+
+@app.post("/scan-postop")
+async def scan_postop():
+    """
+    Phase 2: Post-op scan - verify all instruments present.
+    Returns PASS/FAIL and triggers rostering agent if needed.
+    """
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        return {"error": "Cannot open camera"}
+    
+    try:
+        # Warm up camera
+        for _ in range(5):
+            cap.read()
+        
+        # Capture 30 frames
+        all_detections = []
+        for i in range(30):
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            
+            frame = cv2.resize(frame, (640, 480))
+            _, detections = detect_frame(frame, conf_threshold=0.5)
+            all_detections.extend(detections)
+            
+            await asyncio.sleep(0.033)
+        
+        # Count final instruments
+        final_counts = {}
+        for d in all_detections:
+            cls = d['class']
+            final_counts[cls] = final_counts.get(cls, 0) + 1
+        
+        # Normalize
+        final_counts = {cls: max(1, count // 10) for cls, count in final_counts.items()}
+        
+        # Compare to baseline
+        baseline_simple = {cls: info['count'] for cls, info in tracker.baseline.items()} if tracker.baseline else {}
+        
+        passed = final_counts == baseline_simple
+        
+        # Find missing items
+        missing = {}
+        for cls, expected in baseline_simple.items():
+            actual = final_counts.get(cls, 0)
+            if actual < expected:
+                missing[cls] = expected - actual
+        
+        # Save post-op image
+        ret, frame = cap.read()
+        if ret:
+            cv2.imwrite(f"postop_{datetime.now().strftime('%H%M%S')}.jpg", frame)
+        
+        result = {
+            "passed": passed,
+            "baseline": baseline_simple,
+            "final": final_counts,
+            "missing": missing,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # If failed, trigger rostering agent
+        if not passed:
+            result["alert"] = "INSTRUMENTS MISSING - ROSTERING AGENT TRIGGERED"
+            
+            # Trigger AI Agent: Perceive → Reason → Act
+            rostering_result = await trigger_rostering_alert(
+                missing_items=missing,
+                nurse_id="NURSE_001",  # TODO: Get from session
+                nurse_name="Unknown"   # TODO: Get from session
+            )
+            result["rostering_action"] = rostering_result
+        
+        return result
+        
+    finally:
+        cap.release()
+
+
 @app.post("/reset")
 async def reset_tracker():
     """Reset tracker for new procedure."""
@@ -109,7 +249,7 @@ async def reset_tracker():
 async def websocket_stream(websocket: WebSocket):
     """
     WebSocket endpoint for real-time video streaming.
-    Sends annotated frames + instrument counts + alerts.
+    Optimized for speed: resized frames, JPEG compression, frame skipping.
     """
     await websocket.accept()
     active_connections.append(websocket)
@@ -123,14 +263,29 @@ async def websocket_stream(websocket: WebSocket):
         await websocket.close()
         return
     
+    frame_count = 0
+    last_detections = []
+    
     try:
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
             
-            # Run detection with 50% confidence threshold
-            annotated, detections = detect_frame(frame, conf_threshold=0.5)
+            frame_count += 1
+            
+            # ✅ Fix 1: Resize to smaller resolution for speed
+            frame = cv2.resize(frame, (640, 480))
+            
+            # ✅ Fix 2: Only run detection every 3rd frame
+            if frame_count % 3 == 0:
+                annotated, detections = detect_frame(frame, conf_threshold=0.5)
+                last_detections = detections
+            else:
+                # Send frame without detection boxes (faster)
+                annotated = frame
+                detections = last_detections
+            
             counts = count_by_class(detections)
             
             # Update tracker if baseline is set
@@ -141,8 +296,8 @@ async def websocket_stream(websocket: WebSocket):
                 # Just update current counts without alerts
                 tracker.current = counts
             
-            # Encode frame as base64 JPEG
-            _, buffer = cv2.imencode('.jpg', annotated)
+            # ✅ Fix 3: Compress harder before sending (quality 60)
+            _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 60])
             img_b64 = base64.b64encode(buffer).decode('utf-8')
             
             # Prepare payload
@@ -159,8 +314,8 @@ async def websocket_stream(websocket: WebSocket):
             # Send to client
             await websocket.send_text(json.dumps(payload))
             
-            # Cap at ~20 FPS
-            await asyncio.sleep(0.05)
+            # Cap at ~30 FPS (faster than before)
+            await asyncio.sleep(0.033)
             
     except WebSocketDisconnect:
         print("[SurgEye] Client disconnected")
@@ -224,10 +379,11 @@ async def websocket_video_stream(websocket: WebSocket, video_path: str):
 
 if __name__ == "__main__":
     import uvicorn
+    PORT = 8002  # Use different port to avoid conflict
     print("=" * 60)
     print("SURGEYE SURGICAL INSTRUMENT VISION SYSTEM")
     print("=" * 60)
-    print("Starting server on http://localhost:8000")
-    print("WebSocket: ws://localhost:8000/ws")
+    print(f"Starting server on http://localhost:{PORT}")
+    print(f"WebSocket: ws://localhost:{PORT}/ws")
     print("=" * 60)
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=PORT)

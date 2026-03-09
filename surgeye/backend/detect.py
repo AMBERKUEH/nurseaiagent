@@ -3,7 +3,7 @@ SurgEye: Surgical Instrument Detection Module
 Enhanced with confidence filtering, stability tracking, timeline logging, and screenshot alerts.
 """
 
-from inference import get_model
+from roboflow import Roboflow
 import cv2
 import numpy as np
 import os
@@ -13,13 +13,28 @@ from collections import Counter, deque
 
 # Roboflow API Configuration
 ROBOFLOW_API_KEY = "bX5IkiMxH6IOh59gH6Ku"
-MODEL_ID = "abhinav-ytcui/surgical-instruments-zmagm/1"
+WORKSPACE = "abhinav-ytcui"
+PROJECT = "surgical-instruments-zmagm"
+VERSION = 1
 
 # Surgical instrument classes from Abhinav's model
 CLASSES = [
     'Army_navy', 'Bulldog', 'Castroviejo', 'Forceps',
     'Frazier', 'Hemostat', 'IrisNeedle', 'Mayo_metz', 'Potts'
 ]
+
+# ✅ Unique colors per instrument class (BGR format for OpenCV)
+CLASS_COLORS = {
+    'Army_navy':   (0, 255, 0),      # Green
+    'Bulldog':     (255, 0, 0),      # Blue
+    'Castroviejo': (0, 165, 255),    # Orange
+    'Forceps':     (255, 255, 0),    # Yellow
+    'Frazier':     (255, 0, 255),    # Pink/Magenta
+    'Hemostat':    (0, 255, 255),    # Cyan
+    'IrisNeedle':  (128, 0, 255),    # Purple
+    'Mayo_metz':   (0, 128, 255),    # Light Blue
+    'Potts':       (0, 255, 128),    # Mint
+}
 
 # Detection stability buffer (for 3-frame confirmation)
 STABILITY_FRAMES = 3
@@ -33,11 +48,16 @@ os.makedirs('alerts', exist_ok=True)
 
 # Load Roboflow pretrained model
 print("[SurgEye] Loading Roboflow surgical instruments model...")
-model = get_model(
-    model_id=MODEL_ID,
-    api_key=ROBOFLOW_API_KEY
-)
-print("[SurgEye] Model loaded successfully!")
+try:
+    rf = Roboflow(api_key=ROBOFLOW_API_KEY)
+    project = rf.workspace(WORKSPACE).project(PROJECT)
+    model = project.version(VERSION).model
+    print("[SurgEye] Model loaded successfully!")
+except Exception as e:
+    print(f"[SurgEye] Warning: Could not load Roboflow model: {e}")
+    print("[SurgEye] Falling back to YOLOv8...")
+    from ultralytics import YOLO
+    model = YOLO('yolov8s.pt')
 
 
 def detect_frame(frame: np.ndarray, conf_threshold: float = 0.5) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
@@ -51,50 +71,75 @@ def detect_frame(frame: np.ndarray, conf_threshold: float = 0.5) -> Tuple[np.nda
     Returns:
         Tuple of (annotated_frame, detections_list)
     """
-    # Run inference with Roboflow
-    results = model.infer(frame)[0]
-    
     detections = []
     annotated = frame.copy()
     
-    for pred in results.predictions:
-        # Filter by confidence threshold (default 50%)
-        if pred.confidence < conf_threshold:
-            continue
+    try:
+        # Save frame temporarily for Roboflow API
+        temp_path = 'temp_frame.jpg'
+        cv2.imwrite(temp_path, frame)
+        
+        # Run inference with Roboflow (confidence is 0-100)
+        results = model.predict(temp_path, confidence=int(conf_threshold * 100))
+        predictions = results.json()['predictions']
+        
+        for pred in predictions:
+            # Extract prediction data
+            confidence = pred['confidence'] / 100.0  # Convert from percentage
             
-        # Calculate bounding box coordinates
-        x1 = int(pred.x - pred.width / 2)
-        y1 = int(pred.y - pred.height / 2)
-        x2 = int(pred.x + pred.width / 2)
-        y2 = int(pred.y + pred.height / 2)
+            if confidence < conf_threshold:
+                continue
+            
+            # Get bounding box
+            x = pred['x']
+            y = pred['y']
+            width = pred['width']
+            height = pred['height']
+            class_name = pred['class']
+            
+            # Calculate bounding box coordinates
+            x1 = int(x - width / 2)
+            y1 = int(y - height / 2)
+            x2 = int(x + width / 2)
+            y2 = int(y + height / 2)
+            
+            detection = {
+                'class': class_name,
+                'confidence': round(confidence, 2),
+                'bbox': [x1, y1, x2, y2],
+                'center': [int(x), int(y)]
+            }
+            detections.append(detection)
+            
+            # ✅ Use unique color per instrument class
+            color = CLASS_COLORS.get(class_name, (255, 255, 255))  # White if unknown
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+            
+            # Draw label with confidence percentage
+            label = f"{class_name} {confidence:.0%}"
+            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
+            label_y = y1 - 10 if y1 - 10 > 10 else y1 + 20
+            
+            # Label background with instrument color
+            cv2.rectangle(annotated, 
+                         (x1, label_y - label_size[1] - 4),
+                         (x1 + label_size[0], label_y + 4),
+                         color, -1)
+            
+            # Label text (black for contrast)
+            cv2.putText(annotated, label,
+                       (x1, label_y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
         
-        detection = {
-            'class': pred.class_name,
-            'confidence': round(pred.confidence, 2),
-            'bbox': [x1, y1, x2, y2],
-            'center': [int(pred.x), int(pred.y)]
-        }
-        detections.append(detection)
-        
-        # Draw bounding box with confidence-based color
-        confidence_color = get_confidence_color(pred.confidence)
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), confidence_color, 2)
-        
-        # Draw label with confidence percentage
-        label = f"{pred.class_name} {pred.confidence:.0%}"
-        label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
-        label_y = y1 - 10 if y1 - 10 > 10 else y1 + 20
-        
-        # Label background
-        cv2.rectangle(annotated, 
-                     (x1, label_y - label_size[1] - 4),
-                     (x1 + label_size[0], label_y + 4),
-                     confidence_color, -1)
-        
-        # Label text
-        cv2.putText(annotated, label,
-                   (x1, label_y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+        # Clean up temp file
+        import os
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+    
+    except Exception as e:
+        print(f"[SurgEye] Detection error: {e}")
+        import traceback
+        traceback.print_exc()
     
     return annotated, detections
 
