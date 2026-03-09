@@ -1,0 +1,278 @@
+import { useEffect, useState, useRef, useCallback } from 'react'
+import './App.css'
+
+function App() {
+  const [counts, setCounts] = useState({})
+  const [alerts, setAlerts] = useState([])
+  const [frame, setFrame] = useState('')
+  const [connected, setConnected] = useState(false)
+  const [procedureStarted, setProcedureStarted] = useState(false)
+  const [procedureEnded, setProcedureEnded] = useState(false)
+  const [checkResult, setCheckResult] = useState(null)
+  const [baseline, setBaseline] = useState(null)
+  
+  const wsRef = useRef(null)
+  const audioRef = useRef(new Audio('/alert.mp3'))
+
+  // Connect to WebSocket
+  useEffect(() => {
+    const connectWebSocket = () => {
+      wsRef.current = new WebSocket('ws://localhost:8000/ws')
+      
+      wsRef.current.onopen = () => {
+        console.log('[SurgEye] Connected to server')
+        setConnected(true)
+      }
+      
+      wsRef.current.onmessage = (event) => {
+        const data = JSON.parse(event.data)
+        
+        if (data.error) {
+          console.error('[SurgEye] Error:', data.error)
+          return
+        }
+        
+        setFrame(data.frame)
+        setCounts(data.counts)
+        setProcedureStarted(data.procedure_started)
+        setProcedureEnded(data.procedure_ended)
+        
+        if (data.baseline) {
+          setBaseline(data.baseline)
+        }
+        
+        if (data.alerts?.length > 0) {
+          setAlerts(data.alerts)
+          // Play alert sound
+          audioRef.current.play().catch(e => console.log('Audio play failed:', e))
+        } else {
+          setAlerts([])
+        }
+      }
+      
+      wsRef.current.onclose = () => {
+        console.log('[SurgEye] Disconnected')
+        setConnected(false)
+        // Attempt reconnect after 3 seconds
+        setTimeout(connectWebSocket, 3000)
+      }
+      
+      wsRef.current.onerror = (error) => {
+        console.error('[SurgEye] WebSocket error:', error)
+      }
+    }
+    
+    connectWebSocket()
+    
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close()
+      }
+    }
+  }, [])
+
+  // Set baseline (pre-op)
+  const setBaselineCount = useCallback(async () => {
+    try {
+      const response = await fetch('http://localhost:8000/baseline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      const data = await response.json()
+      
+      if (data.status === 'baseline set') {
+        setProcedureStarted(true)
+        setBaseline(data.counts)
+        alert(`✅ Baseline set: ${Object.entries(data.counts).map(([k, v]) => `${v}x ${k}`).join(', ')}`)
+      } else {
+        alert('⚠️ ' + data.message)
+      }
+    } catch (error) {
+      console.error('Error setting baseline:', error)
+      alert('❌ Failed to set baseline')
+    }
+  }, [])
+
+  // Post-op check
+  const performCheck = useCallback(async () => {
+    try {
+      const response = await fetch('http://localhost:8000/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      const data = await response.json()
+      setCheckResult(data)
+      setProcedureEnded(true)
+    } catch (error) {
+      console.error('Error performing check:', error)
+      alert('❌ Failed to perform check')
+    }
+  }, [])
+
+  // Reset for new procedure
+  const resetProcedure = useCallback(async () => {
+    try {
+      await fetch('http://localhost:8000/reset', { method: 'POST' })
+      setProcedureStarted(false)
+      setProcedureEnded(false)
+      setCheckResult(null)
+      setBaseline(null)
+      setAlerts([])
+      setCounts({})
+    } catch (error) {
+      console.error('Error resetting:', error)
+    }
+  }, [])
+
+  return (
+    <div className="app">
+      {/* Header */}
+      <header className="header">
+        <h1 className="logo">🔬 SurgEye</h1>
+        <div className="status">
+          <span className={`indicator ${connected ? 'connected' : 'disconnected'}`}>
+            {connected ? '🟢 Connected' : '🔴 Disconnected'}
+          </span>
+          {procedureStarted && (
+            <span className="procedure-status">
+              {procedureEnded ? '⏹️ Procedure Ended' : '🔴 Procedure Active'}
+            </span>
+          )}
+        </div>
+      </header>
+
+      <div className="main-content">
+        {/* Video Feed */}
+        <div className="video-section">
+          <div className="video-container">
+            {frame ? (
+              <img 
+                src={`data:image/jpeg;base64,${frame}`} 
+                alt="Surgical Feed" 
+                className="video-feed"
+              />
+            ) : (
+              <div className="no-feed">
+                <p>Waiting for video feed...</p>
+                <p className="subtext">Ensure camera is connected and server is running</p>
+              </div>
+            )}
+          </div>
+
+          {/* Control Buttons */}
+          <div className="controls">
+            {!procedureStarted ? (
+              <button 
+                className="btn btn-primary"
+                onClick={setBaselineCount}
+                disabled={!connected}
+              >
+                🟢 Set Baseline (Pre-op)
+              </button>
+            ) : (
+              <>
+                {!procedureEnded ? (
+                  <button 
+                    className="btn btn-check"
+                    onClick={performCheck}
+                  >
+                    🔍 End Procedure & Check
+                  </button>
+                ) : (
+                  <button 
+                    className="btn btn-reset"
+                    onClick={resetProcedure}
+                  >
+                    🔄 New Procedure
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Sidebar */}
+        <div className="sidebar">
+          {/* Instrument Count */}
+          <div className="panel">
+            <h2 className="panel-title">📊 Instrument Count</h2>
+            {Object.keys(counts).length === 0 ? (
+              <p className="no-data">No instruments detected</p>
+            ) : (
+              <div className="count-list">
+                {Object.entries(counts).map(([cls, count]) => (
+                  <div key={cls} className="count-item">
+                    <span className="count-name">{cls.replace('_', ' ')}</span>
+                    <span className={`count-value ${
+                      baseline && baseline[cls] !== count ? 'mismatch' : ''
+                    }`}>
+                      {count}
+                      {baseline && baseline[cls] && (
+                        <span className="baseline"> / {baseline[cls]}</span>
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Alerts */}
+          {alerts.length > 0 && (
+            <div className="panel panel-alert">
+              <h2 className="panel-title">🚨 Alerts</h2>
+              {alerts.map((alert, i) => (
+                <div key={i} className="alert-item">
+                  {alert}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Post-op Check Result */}
+          {checkResult && (
+            <div className={`panel ${checkResult.passed ? 'panel-success' : 'panel-fail'}`}>
+              <h2 className="panel-title">
+                {checkResult.passed ? '✅ PASS' : '❌ FAIL'}
+              </h2>
+              
+              {checkResult.passed ? (
+                <p>All instruments accounted for!</p>
+              ) : (
+                <>
+                  <p className="fail-message">Instrument count mismatch detected</p>
+                  {checkResult.mismatches?.length > 0 && (
+                    <div className="mismatch-list">
+                      {checkResult.mismatches.map((m, i) => (
+                        <div key={i} className="mismatch-item">
+                          <strong>{m.class}</strong>: 
+                          Expected {m.expected}, Found {m.actual}
+                          {m.difference > 0 ? ` (+${m.difference})` : ` (${m.difference})`}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Instructions */}
+          {!procedureStarted && (
+            <div className="panel panel-info">
+              <h2 className="panel-title">📋 Instructions</h2>
+              <ol className="instructions">
+                <li>Ensure all surgical instruments are visible</li>
+                <li>Click "Set Baseline" to record initial count</li>
+                <li>Perform surgery - SurgEye will track instruments</li>
+                <li>Click "End Procedure & Check" for final count</li>
+              </ol>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default App

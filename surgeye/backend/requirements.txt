@@ -1,0 +1,20 @@
+# SurgEye Backend Dependencies
+# Python 3.8+ required
+
+# Core ML & Computer Vision
+ultralytics>=8.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# Web Framework
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+websockets>=11.0
+
+# Utilities
+python-multipart>=0.0.6
+pillow>=10.0.0
+
+# Optional: For ONNX export (faster CPU inference)
+# onnx>=1.14.0
+# onnxruntime>=1.15.0
