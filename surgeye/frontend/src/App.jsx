@@ -14,72 +14,81 @@ function App() {
   const [screenshots, setScreenshots] = useState([])
   const [showTimeline, setShowTimeline] = useState(false)
   const [showScreenshots, setShowScreenshots] = useState(false)
+  const [wsStatus, setWsStatus] = useState('connecting') // 'connected', 'reconnecting', 'offline'
   
   const wsRef = useRef(null)
   const audioRef = useRef(new Audio('/alert.mp3'))
   const timelineIntervalRef = useRef(null)
+  const reconnectTimerRef = useRef(null)
 
-  // Connect to WebSocket
+  // Connect to WebSocket with auto-reconnect
   useEffect(() => {
-    const connectWebSocket = () => {
-      wsRef.current = new WebSocket('ws://localhost:8002/ws')
+    const connect = () => {
+      console.log('[WS] Connecting...')
+      setWsStatus('connecting')
+      
+      wsRef.current = new WebSocket('ws://localhost:8003/ws')
       
       wsRef.current.onopen = () => {
-        console.log('[SurgEye] Connected to server')
+        console.log('[WS] Connected!')
+        setWsStatus('connected')
         setConnected(true)
       }
       
       wsRef.current.onmessage = (event) => {
-        const data = JSON.parse(event.data)
-        
-        if (data.error) {
-          console.error('[SurgEye] Error:', data.error)
-          return
-        }
-        
-        setFrame(data.frame)
-        setCounts(data.counts)
-        setProcedureStarted(data.procedure_started)
-        setProcedureEnded(data.procedure_ended)
-        
-        if (data.baseline) {
-          setBaseline(data.baseline)
-        }
-        
-        if (data.alerts?.length > 0) {
-          setAlerts(data.alerts)
-          // Play alert sound
-          audioRef.current.play().catch(e => console.log('Audio play failed:', e))
-        } else {
-          setAlerts([])
+        try {
+          const data = JSON.parse(event.data)
+          
+          if (data.error) {
+            console.error('[WS] Error:', data.error)
+            return
+          }
+          
+          setFrame(data.frame)
+          setCounts(data.counts)
+          setProcedureStarted(data.procedure_started)
+          setProcedureEnded(data.procedure_ended)
+          
+          if (data.baseline) {
+            setBaseline(data.baseline)
+          }
+          
+          if (data.alerts?.length > 0) {
+            setAlerts(data.alerts)
+            audioRef.current.play().catch(e => {})
+          } else {
+            setAlerts([])
+          }
+        } catch (e) {
+          console.error('[WS] Parse error:', e)
         }
       }
       
       wsRef.current.onclose = () => {
-        console.log('[SurgEye] Disconnected')
+        console.log('[WS] Disconnected, retrying in 2s...')
+        setWsStatus('reconnecting')
         setConnected(false)
-        // Attempt reconnect after 3 seconds
-        setTimeout(connectWebSocket, 3000)
+        reconnectTimerRef.current = setTimeout(connect, 2000)
       }
       
       wsRef.current.onerror = (error) => {
-        console.error('[SurgEye] WebSocket error:', error)
+        console.log('[WS] Error:', error)
+        wsRef.current?.close()
       }
     }
     
-    connectWebSocket()
+    connect()
     
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close()
-      }
+      clearTimeout(reconnectTimerRef.current)
+      wsRef.current?.close()
     }
   }, [])
 
   // Set baseline (pre-op)
   const setBaselineCount = useCallback(async () => {
     try {
-      const response = await fetch('http://localhost:8002/baseline', {
+      const response = await fetch('http://localhost:8003/baseline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       })
@@ -101,7 +110,7 @@ function App() {
   // Post-op check
   const performCheck = useCallback(async () => {
     try {
-      const response = await fetch('http://localhost:8002/check', {
+      const response = await fetch('http://localhost:8003/check', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       })
@@ -117,7 +126,7 @@ function App() {
   // Reset for new procedure
   const resetProcedure = useCallback(async () => {
     try {
-      await fetch('http://localhost:8002/reset', { method: 'POST' })
+      await fetch('http://localhost:8003/reset', { method: 'POST' })
       setProcedureStarted(false)
       setProcedureEnded(false)
       setCheckResult(null)
@@ -135,7 +144,7 @@ function App() {
   useEffect(() => {
     const fetchTimeline = async () => {
       try {
-        const response = await fetch('http://localhost:8002/timeline')
+        const response = await fetch('http://localhost:8003/timeline')
         const data = await response.json()
         setTimeline(data.timeline || [])
       } catch (error) {
@@ -145,7 +154,7 @@ function App() {
 
     const fetchScreenshots = async () => {
       try {
-        const response = await fetch('http://localhost:8002/alerts/screenshots')
+        const response = await fetch('http://localhost:8003/alerts/screenshots')
         const data = await response.json()
         setScreenshots(data.screenshots || [])
       } catch (error) {
@@ -175,9 +184,17 @@ function App() {
       <header className="header">
         <h1 className="logo">🔬 SurgEye</h1>
         <div className="status">
-          <span className={`indicator ${connected ? 'connected' : 'disconnected'}`}>
-            {connected ? '🟢 Connected' : '🔴 Disconnected'}
+          {/* WebSocket Connection Status */}
+          <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+            wsStatus === 'connected'    ? 'bg-green-500 text-white' :
+            wsStatus === 'reconnecting' ? 'bg-yellow-500 text-black' : 
+                                          'bg-red-500 text-white'
+          }`}>
+            {wsStatus === 'connected'    ? '🟢 Live' :
+             wsStatus === 'reconnecting' ? '🟡 Reconnecting...' : 
+                                           '🔴 Offline'}
           </span>
+          
           {procedureStarted && (
             <span className="procedure-status">
               {procedureEnded ? '⏹️ Procedure Ended' : '🔴 Procedure Active'}

@@ -20,7 +20,7 @@ app = FastAPI(title="SurgEye API", version="1.0.0")
 # Enable CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5176", "http://localhost:5177"],
+    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5176", "http://localhost:5177", "http://localhost:5178"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -245,85 +245,95 @@ async def reset_tracker():
     return {"status": "reset complete"}
 
 
+cap = None  # Global camera instance
+
+def get_camera():
+    """Get or initialize camera with optimized settings."""
+    global cap
+    if cap is None or not cap.isOpened():
+        cap = cv2.VideoCapture(0)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 30)
+        print("[Camera] Initialized")
+    return cap
+
 @app.websocket("/ws")
 async def websocket_stream(websocket: WebSocket):
     """
-    WebSocket endpoint for real-time video streaming.
-    Optimized for speed: resized frames, JPEG compression, frame skipping.
+    WebSocket endpoint with proper error handling and auto-reconnect support.
     """
     await websocket.accept()
     active_connections.append(websocket)
-    
-    # Use webcam by default (0) or video file path
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        await websocket.send_text(json.dumps({
-            "error": "Cannot open video source"
-        }))
-        await websocket.close()
-        return
+    print("[WS] Client connected")
     
     frame_count = 0
     last_detections = []
+    last_counts = {}
     
     try:
         while True:
-            ret, frame = cap.read()
+            # Get camera with auto-reinit if needed
+            camera = get_camera()
+            ret, frame = camera.read()
+            
             if not ret:
-                break
+                print("[WS] Camera read failed, retrying...")
+                await asyncio.sleep(0.1)
+                continue
             
             frame_count += 1
             
-            # ✅ Fix 1: Resize to smaller resolution for speed
-            frame = cv2.resize(frame, (640, 480))
-            
-            # ✅ Fix 2: Only run detection every 3rd frame
-            if frame_count % 3 == 0:
-                annotated, detections = detect_frame(frame, conf_threshold=0.5)
-                last_detections = detections
+            # Only run detection every 5th frame — BIG speed improvement
+            if frame_count % 5 == 0:
+                try:
+                    annotated, last_detections = detect_frame(frame, conf_threshold=0.5)
+                    last_counts = count_by_class(last_detections)
+                except Exception as e:
+                    print(f"[WS] Detection error: {e}")
+                    annotated = frame  # use raw frame if detection fails
             else:
-                # Send frame without detection boxes (faster)
-                annotated = frame
-                detections = last_detections
-            
-            counts = count_by_class(detections)
+                annotated = frame  # send raw frame for smooth video
             
             # Update tracker if baseline is set
             alerts = []
             if tracker.procedure_started:
-                alerts = tracker.update(counts, current_frame=frame)
+                try:
+                    alerts = tracker.update(last_counts, current_frame=frame)
+                except Exception as e:
+                    print(f"[WS] Tracker error: {e}")
             else:
-                # Just update current counts without alerts
-                tracker.current = counts
+                tracker.current = last_counts
             
-            # ✅ Fix 3: Compress harder before sending (quality 60)
-            _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 60])
-            img_b64 = base64.b64encode(buffer).decode('utf-8')
+            # Resize + compress aggressively
+            annotated = cv2.resize(annotated, (640, 480))
+            _, buf = cv2.imencode('.jpg', annotated, 
+                                  [cv2.IMWRITE_JPEG_QUALITY, 50])
+            img_b64 = base64.b64encode(buf).decode()
             
-            # Prepare payload
-            payload = {
-                "frame": img_b64,
-                "counts": counts,
-                "detections": detections,
-                "alerts": alerts,
-                "procedure_started": tracker.procedure_started,
-                "procedure_ended": tracker.procedure_ended,
-                "baseline": tracker.baseline if tracker.procedure_started else None
-            }
+            payload = json.dumps({
+                'frame': img_b64,
+                'counts': last_counts,
+                'detections': last_detections,
+                'alerts': alerts,
+                'procedure_started': tracker.procedure_started,
+                'procedure_ended': tracker.procedure_ended,
+                'baseline': tracker.baseline if tracker.procedure_started else None
+            })
             
-            # Send to client
-            await websocket.send_text(json.dumps(payload))
-            
-            # Cap at ~30 FPS (faster than before)
-            await asyncio.sleep(0.033)
+            await websocket.send_text(payload)
+            await asyncio.sleep(0.033)  # cap at ~30fps
             
     except WebSocketDisconnect:
-        print("[SurgEye] Client disconnected")
+        print("[WS] Client disconnected — waiting for reconnect")
     except Exception as e:
-        print(f"[SurgEye] Error: {e}")
+        print(f"[WS] Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
-        active_connections.remove(websocket)
-        cap.release()
+        print("[WS] Connection closed cleanly")
+        if websocket in active_connections:
+            active_connections.remove(websocket)
 
 
 @app.websocket("/ws/video/{video_path:path}")
@@ -379,7 +389,7 @@ async def websocket_video_stream(websocket: WebSocket, video_path: str):
 
 if __name__ == "__main__":
     import uvicorn
-    PORT = 8002  # Use different port to avoid conflict
+    PORT = 8003  # Use different port to avoid conflict
     print("=" * 60)
     print("SURGEYE SURGICAL INSTRUMENT VISION SYSTEM")
     print("=" * 60)
