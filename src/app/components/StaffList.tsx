@@ -1,5 +1,5 @@
 import { Nurse } from '../data/mockData';
-import { AlertTriangle, AlertCircle } from 'lucide-react';
+import { AlertTriangle, AlertCircle, Check } from 'lucide-react';
 
 interface StaffListProps {
   nurses: Nurse[];
@@ -144,6 +144,35 @@ export function StaffList({ nurses, onNurseClick }: StaffListProps) {
                   {nurse.ward}
                 </span>
               </div>
+              
+              {/* Pre-approved Requests Section */}
+              {nurse.unavailable_days && nurse.unavailable_days.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-gray-700">
+                  <div className="flex items-center gap-1 mb-1">
+                    <span style={{ fontSize: '10px', color: '#9CA3AF' }}>
+                      Pre-approved requests
+                    </span>
+                    {nurse.requests_honored && (
+                      <Check size={12} style={{ color: '#00E5A0' }} />
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {nurse.unavailable_days.map((day) => (
+                      <span
+                        key={day}
+                        className="px-2 py-0.5 rounded text-xs"
+                        style={{
+                          backgroundColor: '#374151',
+                          color: '#9CA3AF',
+                          fontSize: '10px',
+                        }}
+                      >
+                        {day}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}

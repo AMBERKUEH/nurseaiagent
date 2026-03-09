@@ -115,19 +115,49 @@ export default function Dashboard() {
                 overtimeStatus = 'WARNING';
               }
               
+              // Check if pre-approved requests were honored
+              let requestsHonored = true;
+              if (nurse.unavailable_days && nurse.unavailable_days.length > 0) {
+                requestsHonored = nurse.unavailable_days.every((dayOff: string) => {
+                  const dayKey = dayOff.charAt(0).toUpperCase() + dayOff.slice(1).toLowerCase();
+                  const fullDay = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].find(
+                    d => d.toLowerCase().startsWith(dayKey.toLowerCase()) || d.toLowerCase() === dayKey.toLowerCase()
+                  );
+                  if (!fullDay || !result.schedule[fullDay]) return true;
+                  // Check if nurse appears in any shift on this day
+                  const daySchedule = result.schedule[fullDay];
+                  return !['morning', 'afternoon', 'night'].some(
+                    shift => daySchedule[shift] && daySchedule[shift].includes(name)
+                  );
+                });
+              }
+              
               return {
                 ...nurse,
                 fatigue_score: fatigueScore,
                 total_shifts: totalShifts,
                 night_shifts: nightShifts,
                 weekly_hours: hours,
-                overtime_status: overtimeStatus
+                overtime_status: overtimeStatus,
+                requests_honored: requestsHonored
               };
             });
             
             setNurses(updatedNurses);
             // Update localStorage with new fatigue scores and overtime status
             localStorage.setItem('nurses', JSON.stringify(updatedNurses));
+            
+            // Count total pre-approved requests honored
+            const totalRequests = updatedNurses.reduce((sum: number, n: any) => sum + (n.unavailable_days?.length || 0), 0);
+            const honoredCount = updatedNurses.filter((n: any) => n.requests_honored).length;
+            
+            if (totalRequests > 0) {
+              newActivityLog.push({
+                tag: 'SCHEDULING',
+                message: `Honored ${totalRequests} pre-approved nurse requests`,
+                time: currentTime
+              });
+            }
             
             // Add overtime alerts to activity log
             const blockedNurses = updatedNurses.filter((n: any) => n.overtime_status === 'BLOCKED');

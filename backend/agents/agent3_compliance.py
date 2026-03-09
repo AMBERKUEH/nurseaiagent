@@ -82,7 +82,8 @@ class ComplianceAgent:
                     day_off_compliance[nurse] = False
         
         # Rule 1: NIGHT SHIFT PATTERN (EV shifts)
-        # If nurse works EV, must be exactly 3 consecutive EV, then SD+DO
+        # Pattern A (normal): exactly 3 consecutive EV → followed by 1 SD + 1 DO
+        # Pattern B (exception): exactly 4 consecutive EV → followed by 1 SD + 2 DO
         for nurse in all_nurse_names:
             night_days = sorted([d for d, shifts in nurse_shifts_by_day[nurse].items() 
                                 if "night" in shifts])
@@ -98,9 +99,10 @@ class ComplianceAgent:
                         streak_len += 1
                         i += 1
                     
-                    # Check if this is a 3-night streak
+                    last_night_day = night_days[streak_start + streak_len - 1]
+                    
+                    # Pattern A: exactly 3 consecutive EV shifts
                     if streak_len == 3:
-                        last_night_day = night_days[streak_start + streak_len - 1]
                         # Check next 2 days are SD (no shifts) then DO (no shifts)
                         day_after_nights = last_night_day + 1
                         two_days_after = last_night_day + 2
@@ -113,13 +115,30 @@ class ComplianceAgent:
                                   len(nurse_shifts_by_day[nurse].get(two_days_after, [])) == 0)
                         
                         if not (has_sd and has_do):
-                            violations.append(f"{nurse} missing mandatory SD+DO recovery after EV shifts")
-                    elif streak_len != 3 and streak_len > 0:
-                        # Night shifts must be in groups of exactly 3
+                            violations.append(f"{nurse} missing mandatory SD+DO recovery after 3 EV shifts")
+                    
+                    # Pattern B: exactly 4 consecutive EV shifts (exception)
+                    elif streak_len == 4:
+                        # Check next 3 days are SD, DO, DO
+                        day1_after = last_night_day + 1  # Should be SD
+                        day2_after = last_night_day + 2  # Should be DO
+                        day3_after = last_night_day + 3  # Should be DO
+                        
+                        has_sd = (day1_after < len(days) and 
+                                  len(nurse_shifts_by_day[nurse].get(day1_after, [])) == 0)
+                        has_do1 = (day2_after < len(days) and 
+                                   len(nurse_shifts_by_day[nurse].get(day2_after, [])) == 0)
+                        has_do2 = (day3_after < len(days) and 
+                                   len(nurse_shifts_by_day[nurse].get(day3_after, [])) == 0)
+                        
+                        if not (has_sd and has_do1 and has_do2):
+                            violations.append(f"{nurse} missing mandatory SD+DO+DO recovery after 4 EV exception shifts")
+                    
+                    # Invalid pattern: any other number of consecutive EV shifts
+                    elif streak_len > 0:
                         violations.append(
-                            f"{nurse} assigned {streak_len} consecutive EV night shifts — "
-                            f"Malaysian KKM guidelines require exactly 3 consecutive EV shifts "
-                            f"followed by mandatory SD+DO recovery"
+                            f"{nurse} has {streak_len} consecutive EV shifts — must be exactly 3 "
+                            f"(standard) or 4 (exception only)"
                         )
                     
                     i += 1

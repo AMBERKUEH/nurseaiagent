@@ -9,6 +9,8 @@ export interface Nurse {
     shift: 'Morning' | 'Afternoon' | 'Night';
     ward: 'ICU' | 'ER' | 'General' | 'Pediatrics';
   }>;
+  unavailable_days?: string[]; // Pre-approved days off
+  requests_honored?: boolean; // Whether unavailable_days were honored in schedule
 }
 
 export const nurses: Nurse[] = [

@@ -63,7 +63,34 @@ RULES:
 STAFFING REQUIREMENTS (min nurses per shift):
 {json.dumps(staffing_requirements, indent=2, ensure_ascii=False)}
 
-MANDATORY RULES YOU MUST FOLLOW:
+Follow this EXACT assignment priority order used by Malaysian hospitals:
+
+STEP 1 — PREAPPROVED REQUESTS FIRST:
+Check each nurse's unavailable_days. These are preapproved requests.
+Never schedule any nurse on their unavailable_days under any circumstance.
+
+STEP 2 — NIGHT SHIFT ASSIGNMENT:
+Assign EV (night) shifts first before any other shifts.
+Group night shifts in blocks of exactly 3 consecutive nights.
+After every 3 consecutive EV nights, the nurse gets 1 SD day (no shifts) 
+then 1 DO day (no shifts).
+
+STEP 3 — WEEKLY DAY OFF DISTRIBUTION:
+Every nurse must have exactly 1 DO day per week with zero shifts.
+Spread DO days across different days of the week to ensure coverage.
+
+STEP 4 — DAY SHIFT COMPLETION:
+Fill remaining AM (morning) and DA (afternoon) shifts.
+Ensure each shift has minimum 3 nurses.
+Maintain 60% senior (N3/N4) to 40% junior (N1/N2) ratio per shift.
+
+STEP 5 — GAP FILLING:
+Check all shifts. If any shift has fewer than 3 nurses, 
+add available nurses who have not exceeded their weekly limit.
+
+Follow these steps IN ORDER. Do not skip steps.
+
+ADDITIONAL MANDATORY RULES:
 
 1. EVERY NURSE MUST HAVE EXACTLY 1 DAY OFF (DO)
    - Each nurse must have exactly 1 day with NO shifts assigned
@@ -74,6 +101,7 @@ MANDATORY RULES YOU MUST FOLLOW:
    - After 3 consecutive nights, the next day must be SD (sleeping day - no shifts)
    - Then the following day must be DO (day off - no shifts)
    - Pattern: EV + EV + EV + SD + DO
+   - Exception: 4 consecutive EV allowed with SD + DO + DO recovery
 
 3. CONSECUTIVE SHIFT LIMITS
    - Never assign more than 3 consecutive morning-only shifts to one nurse
