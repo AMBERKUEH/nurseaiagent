@@ -3,9 +3,12 @@ Agent 1: Scheduling Agent
 Generates and explains nurse schedules using Groq API.
 """
 
+from dotenv import load_dotenv
 import os
 import json
 from typing import Dict, List, Any
+
+load_dotenv()
 
 
 def call_llm(prompt: str) -> str:
@@ -22,7 +25,7 @@ def call_llm(prompt: str) -> str:
     client = Groq(api_key=api_key)
     
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",  # Fast and cost-effective
+        model="llama-3.3-70b-versatile",  # Better quality for complex JSON
         messages=[
             {"role": "system", "content": "You are an expert nurse scheduling AI for a hospital."},
             {"role": "user", "content": prompt}

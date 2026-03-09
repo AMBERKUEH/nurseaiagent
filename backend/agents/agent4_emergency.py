@@ -3,9 +3,12 @@ Agent 4: Emergency Agent
 Handles emergency disruptions using Groq API.
 """
 
+from dotenv import load_dotenv
 import os
 import json
 from typing import Dict, List, Any
+
+load_dotenv()
 
 
 def call_llm(prompt: str) -> str:
@@ -22,7 +25,7 @@ def call_llm(prompt: str) -> str:
     client = Groq(api_key=api_key)
     
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": "You are a hospital emergency response AI."},
             {"role": "user", "content": prompt}
