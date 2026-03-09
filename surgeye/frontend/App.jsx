@@ -10,9 +10,14 @@ function App() {
   const [procedureEnded, setProcedureEnded] = useState(false)
   const [checkResult, setCheckResult] = useState(null)
   const [baseline, setBaseline] = useState(null)
+  const [timeline, setTimeline] = useState([])
+  const [screenshots, setScreenshots] = useState([])
+  const [showTimeline, setShowTimeline] = useState(false)
+  const [showScreenshots, setShowScreenshots] = useState(false)
   
   const wsRef = useRef(null)
   const audioRef = useRef(new Audio('/alert.mp3'))
+  const timelineIntervalRef = useRef(null)
 
   // Connect to WebSocket
   useEffect(() => {
@@ -119,10 +124,50 @@ function App() {
       setBaseline(null)
       setAlerts([])
       setCounts({})
+      setTimeline([])
+      setScreenshots([])
     } catch (error) {
       console.error('Error resetting:', error)
     }
   }, [])
+
+  // Fetch timeline periodically
+  useEffect(() => {
+    const fetchTimeline = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/timeline')
+        const data = await response.json()
+        setTimeline(data.timeline || [])
+      } catch (error) {
+        console.error('Error fetching timeline:', error)
+      }
+    }
+
+    const fetchScreenshots = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/alerts/screenshots')
+        const data = await response.json()
+        setScreenshots(data.screenshots || [])
+      } catch (error) {
+        console.error('Error fetching screenshots:', error)
+      }
+    }
+
+    if (procedureStarted) {
+      fetchTimeline()
+      fetchScreenshots()
+      timelineIntervalRef.current = setInterval(() => {
+        fetchTimeline()
+        fetchScreenshots()
+      }, 2000)
+    }
+
+    return () => {
+      if (timelineIntervalRef.current) {
+        clearInterval(timelineIntervalRef.current)
+      }
+    }
+  }, [procedureStarted])
 
   return (
     <div className="app">
@@ -200,15 +245,25 @@ function App() {
               <p className="no-data">No instruments detected</p>
             ) : (
               <div className="count-list">
-                {Object.entries(counts).map(([cls, count]) => (
+                {Object.entries(counts).map(([cls, info]) => (
                   <div key={cls} className="count-item">
-                    <span className="count-name">{cls.replace('_', ' ')}</span>
+                    <div className="count-info">
+                      <span className="count-name">{cls.replace('_', ' ')}</span>
+                      {info.avg_confidence && (
+                        <span className={`confidence-badge ${
+                          info.avg_confidence >= 0.8 ? 'high' : 
+                          info.avg_confidence >= 0.6 ? 'medium' : 'low'
+                        }`}>
+                          {(info.avg_confidence * 100).toFixed(0)}%
+                        </span>
+                      )}
+                    </div>
                     <span className={`count-value ${
-                      baseline && baseline[cls] !== count ? 'mismatch' : ''
+                      baseline && baseline[cls]?.count !== info.count ? 'mismatch' : ''
                     }`}>
-                      {count}
+                      {info.count}
                       {baseline && baseline[cls] && (
-                        <span className="baseline"> / {baseline[cls]}</span>
+                        <span className="baseline"> / {baseline[cls].count}</span>
                       )}
                     </span>
                   </div>
@@ -253,6 +308,56 @@ function App() {
                     </div>
                   )}
                 </>
+              )}
+            </div>
+          )}
+
+          {/* Instrument Timeline */}
+          {procedureStarted && timeline.length > 0 && (
+            <div className="panel">
+              <div className="panel-header" onClick={() => setShowTimeline(!showTimeline)}>
+                <h2 className="panel-title">📜 Timeline ({timeline.length})</h2>
+                <span className="toggle-icon">{showTimeline ? '▼' : '▶'}</span>
+              </div>
+              {showTimeline && (
+                <div className="timeline">
+                  {timeline.slice(-10).reverse().map((event, i) => (
+                    <div key={i} className={`timeline-item ${event.action}`}>
+                      <span className="timeline-time">{event.time}</span>
+                      <span className="timeline-instrument">{event.instrument}</span>
+                      <span className={`timeline-action ${event.action}`}>
+                        {event.action === 'missing' && '⚠️ MISSING'}
+                        {event.action === 'returned' && '✅ Returned'}
+                        {event.action === 'detected' && '👁️ Detected'}
+                        {event.action === 'baseline_set' && '📋 Baseline'}
+                      </span>
+                      {event.confidence && (
+                        <span className="timeline-confidence">
+                          {(event.confidence * 100).toFixed(0)}%
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Alert Screenshots */}
+          {screenshots.length > 0 && (
+            <div className="panel">
+              <div className="panel-header" onClick={() => setShowScreenshots(!showScreenshots)}>
+                <h2 className="panel-title">📸 Alert Screenshots ({screenshots.length})</h2>
+                <span className="toggle-icon">{showScreenshots ? '▼' : '▶'}</span>
+              </div>
+              {showScreenshots && (
+                <div className="screenshots-list">
+                  {screenshots.slice(0, 5).map((screenshot, i) => (
+                    <div key={i} className="screenshot-item">
+                      <span className="screenshot-name">{screenshot}</span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}

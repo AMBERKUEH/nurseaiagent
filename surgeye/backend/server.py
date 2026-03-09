@@ -11,7 +11,7 @@ import json
 import asyncio
 from typing import Optional
 
-from detect import detect_frame, count_by_class
+from detect import detect_frame, count_by_class, get_instrument_log, get_alert_screenshots
 from tracker import tracker
 
 app = FastAPI(title="SurgEye API", version="1.0.0")
@@ -80,6 +80,24 @@ async def get_status():
     return tracker.get_status()
 
 
+@app.get("/timeline")
+async def get_timeline():
+    """Get instrument timeline log."""
+    return {
+        "timeline": get_instrument_log(),
+        "event_count": len(get_instrument_log())
+    }
+
+
+@app.get("/alerts/screenshots")
+async def get_screenshots():
+    """Get list of alert screenshots."""
+    return {
+        "screenshots": get_alert_screenshots(),
+        "count": len(get_alert_screenshots())
+    }
+
+
 @app.post("/reset")
 async def reset_tracker():
     """Reset tracker for new procedure."""
@@ -111,14 +129,14 @@ async def websocket_stream(websocket: WebSocket):
             if not ret:
                 break
             
-            # Run detection
-            annotated, detections = detect_frame(frame)
+            # Run detection with 50% confidence threshold
+            annotated, detections = detect_frame(frame, conf_threshold=0.5)
             counts = count_by_class(detections)
             
             # Update tracker if baseline is set
             alerts = []
             if tracker.procedure_started:
-                alerts = tracker.update(counts)
+                alerts = tracker.update(counts, current_frame=frame)
             else:
                 # Just update current counts without alerts
                 tracker.current = counts
