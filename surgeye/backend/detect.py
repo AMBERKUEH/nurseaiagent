@@ -1,9 +1,9 @@
 """
 SurgEye: Surgical Instrument Detection Module
-Enhanced with confidence filtering, stability tracking, timeline logging, and screenshot alerts.
+Uses local YOLOv8 for fast inference - no API lag.
 """
 
-from roboflow import Roboflow
+from ultralytics import YOLO
 import cv2
 import numpy as np
 import os
@@ -11,13 +11,7 @@ from datetime import datetime
 from typing import List, Dict, Tuple, Any
 from collections import Counter, deque
 
-# Roboflow API Configuration
-ROBOFLOW_API_KEY = "bX5IkiMxH6IOh59gH6Ku"
-WORKSPACE = "abhinav-ytcui"
-PROJECT = "surgical-instruments-zmagm"
-VERSION = 1
-
-# Surgical instrument classes from Abhinav's model
+# Surgical instrument classes
 CLASSES = [
     'Army_navy', 'Bulldog', 'Castroviejo', 'Forceps',
     'Frazier', 'Hemostat', 'IrisNeedle', 'Mayo_metz', 'Potts'
@@ -36,7 +30,7 @@ CLASS_COLORS = {
     'Potts':       (0, 255, 128),    # Mint
 }
 
-# Detection stability buffer (for 3-frame confirmation)
+# Detection stability buffer
 STABILITY_FRAMES = 3
 frame_buffer = deque(maxlen=STABILITY_FRAMES)
 
@@ -46,23 +40,26 @@ instrument_log: List[Dict[str, Any]] = []
 # Create alerts directory
 os.makedirs('alerts', exist_ok=True)
 
-# Load Roboflow pretrained model
-print("[SurgEye] Loading Roboflow surgical instruments model...")
+# Load YOLOv8 model (local - no API lag!)
+print("[SurgEye] Loading YOLOv8 model locally...")
 try:
-    rf = Roboflow(api_key=ROBOFLOW_API_KEY)
-    project = rf.workspace(WORKSPACE).project(PROJECT)
-    model = project.version(VERSION).model
-    print("[SurgEye] Model loaded successfully!")
+    # Try to load fine-tuned model if available
+    model_path = 'Surgical-Instruments-1/weights/best.pt'
+    if os.path.exists(model_path):
+        model = YOLO(model_path)
+        print(f"[SurgEye] Loaded fine-tuned model: {model_path}")
+    else:
+        # Fall back to pretrained YOLOv8s
+        model = YOLO('yolov8s.pt')
+        print("[SurgEye] Loaded YOLOv8s (pretrained)")
 except Exception as e:
-    print(f"[SurgEye] Warning: Could not load Roboflow model: {e}")
-    print("[SurgEye] Falling back to YOLOv8...")
-    from ultralytics import YOLO
-    model = YOLO('yolov8s.pt')
+    print(f"[SurgEye] Error loading model: {e}")
+    model = None
 
 
 def detect_frame(frame: np.ndarray, conf_threshold: float = 0.5) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
     """
-    Detect surgical instruments with confidence filtering.
+    Detect surgical instruments using local YOLOv8 (FAST - no API lag).
     
     Args:
         frame: Input image/frame (numpy array)
@@ -74,45 +71,33 @@ def detect_frame(frame: np.ndarray, conf_threshold: float = 0.5) -> Tuple[np.nda
     detections = []
     annotated = frame.copy()
     
+    if model is None:
+        print("[SurgEye] Model not loaded!")
+        return annotated, detections
+    
     try:
-        # Save frame temporarily for Roboflow API
-        temp_path = 'temp_frame.jpg'
-        cv2.imwrite(temp_path, frame)
+        # Run inference with local YOLOv8 (FAST!)
+        results = model(frame, conf=conf_threshold, verbose=False)[0]
         
-        # Run inference with Roboflow (confidence is 0-100)
-        results = model.predict(temp_path, confidence=int(conf_threshold * 100))
-        predictions = results.json()['predictions']
-        
-        for pred in predictions:
-            # Extract prediction data
-            confidence = pred['confidence'] / 100.0  # Convert from percentage
-            
-            if confidence < conf_threshold:
-                continue
+        for box in results.boxes:
+            confidence = float(box.conf)
+            class_id = int(box.cls)
+            class_name = CLASSES[class_id] if class_id < len(CLASSES) else f'class_{class_id}'
             
             # Get bounding box
-            x = pred['x']
-            y = pred['y']
-            width = pred['width']
-            height = pred['height']
-            class_name = pred['class']
-            
-            # Calculate bounding box coordinates
-            x1 = int(x - width / 2)
-            y1 = int(y - height / 2)
-            x2 = int(x + width / 2)
-            y2 = int(y + height / 2)
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            cx, cy = map(int, box.xywh[0][:2])
             
             detection = {
                 'class': class_name,
                 'confidence': round(confidence, 2),
                 'bbox': [x1, y1, x2, y2],
-                'center': [int(x), int(y)]
+                'center': [cx, cy]
             }
             detections.append(detection)
             
             # ✅ Use unique color per instrument class
-            color = CLASS_COLORS.get(class_name, (255, 255, 255))  # White if unknown
+            color = CLASS_COLORS.get(class_name, (255, 255, 255))
             cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
             
             # Draw label with confidence percentage
@@ -130,11 +115,6 @@ def detect_frame(frame: np.ndarray, conf_threshold: float = 0.5) -> Tuple[np.nda
             cv2.putText(annotated, label,
                        (x1, label_y),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
-        
-        # Clean up temp file
-        import os
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
     
     except Exception as e:
         print(f"[SurgEye] Detection error: {e}")
