@@ -50,15 +50,11 @@ os.makedirs('alerts', exist_ok=True)
 # Load YOLOv8 model (local - no API lag!)
 print("[SurgEye] Loading YOLOv8 model locally...")
 try:
-    # Try to load trained model first
-    trained_model_path = 'runs/detect/train/weights/best.pt'
+    # Try to load trained model first (drop best.pt in surgeye/backend/weights/)
+    trained_model_path = 'weights/best.pt'
     if os.path.exists(trained_model_path):
         model = YOLO(trained_model_path)
         print(f"[SurgEye] Loaded trained model: {trained_model_path}")
-    # Fall back to dataset weights if available
-    elif os.path.exists('Surgical-Instruments-1/weights/best.pt'):
-        model = YOLO('Surgical-Instruments-1/weights/best.pt')
-        print("[SurgEye] Loaded dataset weights")
     else:
         # Fall back to pretrained YOLOv8s
         model = YOLO('yolov8s.pt')

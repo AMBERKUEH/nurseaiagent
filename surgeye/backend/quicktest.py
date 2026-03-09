@@ -3,7 +3,7 @@ from ultralytics import YOLO
 import os
 
 # Try to load trained model
-trained_model_path = 'runs/detect/train/weights/best.pt'
+trained_model_path = 'weights/best.pt'
 if os.path.exists(trained_model_path):
     model = YOLO(trained_model_path)
     print(f"✅ Loaded trained model: {trained_model_path}")
