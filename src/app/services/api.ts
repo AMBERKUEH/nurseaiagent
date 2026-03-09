@@ -101,6 +101,7 @@ export async function handleEmergency(
   reassignments: string[];
   updated_schedule: any;
   severity: string;
+  action_taken: string;
 } | null> {
   try {
     const body: any = { disruption };

@@ -1,10 +1,13 @@
 import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { AgentMessage } from '../data/mockData';
-import { updateSchedule } from '../services/api';
+import { handleEmergency } from '../services/api';
 
 interface AgentActivityProps {
   messages: AgentMessage[];
+  schedule?: any;
+  onScheduleUpdate?: (schedule: any) => void;
+  onEmergency?: (severity: string) => void;
 }
 
 const messageColors = {
@@ -14,7 +17,12 @@ const messageColors = {
   EMERGENCY: '#FF3D5A',
 };
 
-export function AgentActivity({ messages: initialMessages }: AgentActivityProps) {
+export function AgentActivity({ 
+  messages: initialMessages, 
+  schedule, 
+  onScheduleUpdate, 
+  onEmergency 
+}: AgentActivityProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [inputValue, setInputValue] = useState('');
   const [messages, setMessages] = useState<AgentMessage[]>(initialMessages);
@@ -26,42 +34,36 @@ export function AgentActivity({ messages: initialMessages }: AgentActivityProps)
 
     setIsLoading(true);
 
-    // Add user message
-    const userMessage: AgentMessage = {
-      id: Date.now().toString(),
-      type: 'SCHEDULING',
-      message: `User: ${inputValue}`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
-    setMessages((prev) => [...prev, userMessage]);
+    // Get current schedule from prop or localStorage
+    const currentSchedule = schedule || (() => {
+      const scheduleData = localStorage.getItem('scheduleData');
+      return scheduleData ? JSON.parse(scheduleData).schedule : {};
+    })();
 
-    // Get current schedule from localStorage
-    const scheduleData = localStorage.getItem('scheduleData');
-    const currentSchedule = scheduleData ? JSON.parse(scheduleData).schedule : {};
-
-    // Call API
-    const result = await updateSchedule(currentSchedule, inputValue);
+    // Call Emergency API
+    const result = await handleEmergency(inputValue, currentSchedule);
 
     if (result) {
-      // Update localStorage with new schedule
-      const updatedScheduleData = {
-        ...JSON.parse(scheduleData || '{}'),
-        schedule: result.updated_schedule,
-      };
-      localStorage.setItem('scheduleData', JSON.stringify(updatedScheduleData));
-
-      // Add emergency message
+      // Add emergency message to activity log
       const emergencyMessage: AgentMessage = {
-        id: (Date.now() + 1).toString(),
+        id: Date.now().toString(),
         type: 'EMERGENCY',
-        message: `[EMERGENCY] ${result.action_taken}`,
+        message: result.action_taken || 'Emergency processed',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, emergencyMessage]);
 
-      // Check severity
+      // Update schedule if provided
+      if (result.updated_schedule && onScheduleUpdate) {
+        onScheduleUpdate(result.updated_schedule);
+      }
+
+      // Check severity and notify parent
       if (result.severity === 'HIGH') {
         setIsEmergency(true);
+        if (onEmergency) {
+          onEmergency('HIGH');
+        }
         // Dispatch event to notify dashboard
         window.dispatchEvent(new CustomEvent('emergency-triggered', { 
           detail: { severity: 'HIGH' } 
@@ -70,14 +72,15 @@ export function AgentActivity({ messages: initialMessages }: AgentActivityProps)
     } else {
       // Add error message
       const errorMessage: AgentMessage = {
-        id: (Date.now() + 1).toString(),
+        id: Date.now().toString(),
         type: 'EMERGENCY',
-        message: '[EMERGENCY] Failed to process disruption. Please try again.',
+        message: 'Failed to process emergency. Please try again.',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, errorMessage]);
     }
 
+    // Clear input
     setInputValue('');
     setIsLoading(false);
   };
