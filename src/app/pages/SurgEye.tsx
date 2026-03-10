@@ -226,7 +226,9 @@ export default function SurgEyePage() {
 
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col">
-      <MainNavbar />
+      <div className="relative z-50">
+        <MainNavbar />
+      </div>
       
       <div className="flex-1 flex">
         {/* Main Video Section */}
