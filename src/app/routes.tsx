@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from "react-router";
+import { createBrowserRouter } from "react-router";
 import Upload from "./pages/Upload";
 import Processing from "./pages/Processing";
 import Dashboard from "./pages/Dashboard";
@@ -8,7 +8,7 @@ import SurgEyePage from "./pages/SurgEye";
 export const router = createBrowserRouter([
   {
     path: "/",
-    element: <Navigate to="/schedule" replace />,
+    Component: Upload,
   },
   {
     path: "/upload",
