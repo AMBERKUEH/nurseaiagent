@@ -181,9 +181,64 @@ def seed_dummy_data():
         ('surgery-001', 'surgery-session-001', 'nurse-001', 'Scrub Nurse', today.strftime('%Y-%m-%d'))
     )
     
+    # Seed demo surgery sessions with baseline data for presentation
+    demo_sessions = [
+        {
+            'id': 'surgery-demo-001',
+            'nurse_id': 'nurse-001',
+            'nurse_name': 'Sarah Chen',
+            'baseline': {'Forceps': 2, 'Hemostat': 1, 'Scalpel': 1, 'Army_navy': 3},
+            'final': {'Forceps': 2, 'Hemostat': 1, 'Scalpel': 1, 'Army_navy': 3},
+            'status': 'completed',
+            'passed': True
+        },
+        {
+            'id': 'surgery-demo-002',
+            'nurse_id': 'nurse-002',
+            'nurse_name': 'James Wong',
+            'baseline': {'Forceps': 3, 'Hemostat': 2, 'Scalpel': 1, 'Towel_clip': 4},
+            'final': {'Forceps': 3, 'Hemostat': 1, 'Scalpel': 1, 'Towel_clip': 4},
+            'status': 'completed',
+            'passed': False,
+            'investigation_id': 'investigation-demo-001'
+        }
+    ]
+    
+    for session in demo_sessions:
+        cursor.execute('''
+            INSERT INTO surgery_sessions (id, nurse_id, nurse_name, status, baseline_counts, final_counts, investigation_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            session['id'],
+            session['nurse_id'],
+            session['nurse_name'],
+            session['status'],
+            json.dumps(session['baseline']),
+            json.dumps(session['final']),
+            session.get('investigation_id')
+        ))
+    
+    # Seed demo investigations
+    cursor.execute('''
+        INSERT INTO violations (id, nurse_id, surgery_id, instrument_name, instrument_count, status)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', ('violation-demo-001', 'nurse-002', 'surgery-demo-002', 'Hemostat', 1, 'under_investigation'))
+    
+    cursor.execute('''
+        INSERT INTO investigations (id, nurse_id, surgery_id, violation_id, report_json, audit_status)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (
+        'investigation-demo-001',
+        'nurse-002',
+        'surgery-demo-002',
+        'violation-demo-001',
+        json.dumps({'missing_items': {'Hemostat': 1}, 'timeline': []}),
+        'under_investigation'
+    ))
+    
     conn.commit()
     conn.close()
-    print(f"[DB] Seeded {len(nurses)} nurses and {len(shifts)} shifts")
+    print(f"[DB] Seeded {len(nurses)} nurses, {len(shifts)} shifts, {len(demo_sessions)} demo sessions")
 
 
 # ============ Nurse Operations ============
