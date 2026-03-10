@@ -29,7 +29,7 @@ def call_groq_vision(image_base64: str, mime_type: str = "image/png") -> str:
     image_data_url = f"data:{mime_type};base64,{image_base64}"
     
     response = client.chat.completions.create(
-        model="llama-3.2-11b-vision-preview",  # Vision-capable model
+        model="meta-llama/llama-4-scout-17b-16e-instruct",   
         messages=[
             {
                 "role": "user",
@@ -61,6 +61,33 @@ Return ONLY the JSON array, no markdown, no explanation."""
     return response.choices[0].message.content
 
 
+def find_poppler_path() -> str:
+    """Find Poppler installation path on Windows."""
+    import os
+    from pathlib import Path
+    
+    # Common installation paths to check
+    possible_paths = [
+        r"C:\Users\pangt\Downloads\poppler-25.12.0\Library\bin",
+        r"C:\poppler\bin",
+        r"C:\Program Files\poppler\bin",
+        r"C:\Program Files (x86)\poppler\bin",
+    ]
+    
+    # Also check if it's in PATH
+    path_env = os.environ.get("PATH", "")
+    for path in path_env.split(os.pathsep):
+        if "poppler" in path.lower() and "bin" in path.lower():
+            possible_paths.insert(0, path)  # Prioritize PATH entries
+    
+    for path in possible_paths:
+        pdftoppm_exe = os.path.join(path, "pdftoppm.exe")
+        if os.path.exists(pdftoppm_exe):
+            return path
+    
+    return None
+
+
 def pdf_to_base64_images(pdf_path: str) -> List[str]:
     """Convert PDF pages to base64-encoded PNG images."""
     try:
@@ -73,7 +100,25 @@ def pdf_to_base64_images(pdf_path: str) -> List[str]:
     except ImportError:
         raise ImportError("PIL not installed. Run: pip install Pillow")
     
-    images = convert_from_path(pdf_path, dpi=200)
+    # Find Poppler path
+    poppler_path = find_poppler_path()
+    
+    try:
+        if poppler_path:
+            images = convert_from_path(pdf_path, dpi=200, poppler_path=poppler_path)
+        else:
+            images = convert_from_path(pdf_path, dpi=200)
+    except Exception as e:
+        if "poppler" in str(e).lower() or "pdftoppm" in str(e).lower():
+            raise RuntimeError(
+                "Poppler is not installed or not found. pdf2image requires Poppler to convert PDFs.\n"
+                "Windows: Download from https://github.com/oschwartz10612/poppler-windows/releases/\n"
+                "        Extract to C:\\poppler and add C:\\poppler\\Library\\bin to PATH\n"
+                "macOS: brew install poppler\n"
+                "Linux: sudo apt-get install poppler-utils"
+            )
+        raise
+    
     base64_images = []
     
     for image in images:
@@ -125,8 +170,9 @@ class OCRAgent:
             
         except Exception as e:
             print(f"OCR extraction failed: {e}")
-            print("Returning fallback sample data...")
-            return self._fallback_nurses()
+            # Re-raise the error instead of falling back to mock data
+            # so the user knows what's wrong
+            raise RuntimeError(f"PDF extraction failed: {str(e)}")
     
     def _fallback_nurses(self) -> List[Dict[str, Any]]:
         """Return hardcoded sample nurse data as fallback."""
