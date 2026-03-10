@@ -13,9 +13,14 @@ from typing import Optional
 
 from detect import detect_frame, count_by_class, get_instrument_log, get_alert_screenshots
 from tracker import tracker
-from rostering_agent import trigger_rostering_alert
+from rostering_agent import trigger_rostering_alert, rostering_agent
+from database import init_database, seed_dummy_data, get_all_nurses
 
 app = FastAPI(title="SurgEye API", version="1.0.0")
+
+# Initialize database on startup
+init_database()
+seed_dummy_data()
 
 # Enable CORS for React frontend
 app.add_middleware(
@@ -97,6 +102,76 @@ async def get_screenshots():
         "screenshots": get_alert_screenshots(),
         "count": len(get_alert_screenshots())
     }
+
+
+# ============ Investigation API Endpoints ============
+
+@app.get("/api/investigations")
+async def api_get_investigations():
+    """Get all investigations."""
+    investigations = rostering_agent.get_investigations()
+    return {"investigations": investigations}
+
+
+@app.get("/api/investigations/{investigation_id}")
+async def api_get_investigation(investigation_id: str):
+    """Get investigation by ID with full evidence."""
+    investigation = rostering_agent.get_investigation(investigation_id)
+    if not investigation:
+        return {"error": "Investigation not found"}
+    return investigation
+
+
+@app.get("/api/violations")
+async def api_get_violations():
+    """Get all violations."""
+    violations = rostering_agent.get_violations()
+    return {"violations": violations}
+
+
+@app.get("/api/nurse/{nurse_id}/status")
+async def api_get_nurse_status(nurse_id: str):
+    """Get nurse status with any active violations."""
+    status = rostering_agent.get_nurse_status(nurse_id)
+    return status
+
+
+@app.post("/api/trigger-investigation")
+async def api_trigger_investigation(
+    missing_items: dict,
+    nurse_id: str = "nurse-001",
+    nurse_name: str = "Sarah Chen",
+    surgery_id: str = None,
+    baseline_image: str = None,
+    postop_image: str = None
+):
+    """Manually trigger an investigation (for testing)."""
+    from datetime import datetime
+    
+    if surgery_id is None:
+        surgery_id = f"surgery-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    
+    evidence = {
+        "baseline_image": baseline_image,
+        "postop_image": postop_image,
+        "timeline": []
+    }
+    
+    result = await trigger_rostering_alert(
+        missing_items=missing_items,
+        nurse_id=nurse_id,
+        nurse_name=nurse_name,
+        session_id=surgery_id,
+        evidence=evidence
+    )
+    
+    return result
+
+
+@app.get("/api/nurses")
+async def api_get_nurses():
+    """Get all nurses."""
+    return {"nurses": get_all_nurses()}
 
 
 @app.post("/scan-baseline")
@@ -262,6 +337,7 @@ def get_camera():
 async def websocket_stream(websocket: WebSocket):
     """
     WebSocket endpoint with proper error handling and auto-reconnect support.
+    Includes investigation_id and flagged_nurse when missing instruments detected.
     """
     await websocket.accept()
     active_connections.append(websocket)
@@ -270,6 +346,7 @@ async def websocket_stream(websocket: WebSocket):
     frame_count = 0
     last_detections = []
     last_counts = {}
+    pending_investigation = None  # Store investigation result for WebSocket
     
     try:
         while True:
@@ -300,6 +377,25 @@ async def websocket_stream(websocket: WebSocket):
             if tracker.procedure_started:
                 try:
                     alerts = tracker.update(last_counts, current_frame=frame)
+                    
+                    # If missing instrument alert, trigger rostering agent
+                    if alerts and any('MISSING' in str(a) for a in alerts):
+                        # Get missing items from tracker
+                        missing = {}
+                        if tracker.baseline:
+                            for cls, info in tracker.baseline.items():
+                                current_count = last_counts.get(cls, {}).get('count', 0)
+                                if current_count < info.get('count', 0):
+                                    missing[cls] = info.get('count', 0) - current_count
+                        
+                        if missing and not pending_investigation:
+                            # Trigger rostering agent
+                            result = await trigger_rostering_alert(
+                                missing_items=missing,
+                                nurse_id="nurse-001",  # Demo: hardcoded
+                                nurse_name="Sarah Chen"
+                            )
+                            pending_investigation = result
                 except Exception as e:
                     print(f"[WS] Tracker error: {e}")
             else:
@@ -311,7 +407,8 @@ async def websocket_stream(websocket: WebSocket):
                                   [cv2.IMWRITE_JPEG_QUALITY, 50])
             img_b64 = base64.b64encode(buf).decode()
             
-            payload = json.dumps({
+            # Build payload with investigation info if available
+            payload_data = {
                 'frame': img_b64,
                 'counts': last_counts,
                 'detections': last_detections,
@@ -319,7 +416,14 @@ async def websocket_stream(websocket: WebSocket):
                 'procedure_started': tracker.procedure_started,
                 'procedure_ended': tracker.procedure_ended,
                 'baseline': tracker.baseline if tracker.procedure_started else None
-            })
+            }
+            
+            # Add investigation info if triggered
+            if pending_investigation:
+                payload_data['investigation_id'] = pending_investigation.get('investigation_id')
+                payload_data['flagged_nurse'] = pending_investigation.get('flagged_nurse')
+            
+            payload = json.dumps(payload_data)
             
             await websocket.send_text(payload)
             await asyncio.sleep(0.033)  # cap at ~30fps

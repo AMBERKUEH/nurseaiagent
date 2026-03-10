@@ -3,6 +3,8 @@ import Upload from "./pages/Upload";
 import Processing from "./pages/Processing";
 import Dashboard from "./pages/Dashboard";
 import Emergency from "./pages/Emergency";
+import SchedulePage from "./pages/SchedulePage";
+import SurgEyePage from "./pages/SurgEye";
 
 export const router = createBrowserRouter([
   {
@@ -16,6 +18,14 @@ export const router = createBrowserRouter([
   {
     path: "/dashboard",
     Component: Dashboard,
+  },
+  {
+    path: "/schedule",
+    Component: SchedulePage,
+  },
+  {
+    path: "/surgeye",
+    Component: SurgEyePage,
   },
   {
     path: "/emergency",
