@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { Navbar } from '../components/Navbar';
-import { StaffList } from '../components/StaffList';
+import { StaffPanel } from '../components/StaffPanel';
 import { WeeklySchedule } from '../components/WeeklySchedule';
-import { FatigueIndex } from '../components/FatigueIndex';
 import { ComplianceBar } from '../components/ComplianceBar';
 import { NurseModal } from '../components/NurseModal';
 import { AgentActivity } from '../components/AgentActivity';
@@ -268,17 +267,8 @@ export default function Dashboard() {
 
         <div className="p-6">
           <div className="grid grid-cols-12 gap-6 mb-6">
-            <div className="col-span-2">
-              <StaffList
-                nurses={nurses.map((n, idx) => ({
-                  id: String(idx), name: n.name,
-                  skillLevel: Math.min(Math.max(parseInt(n.skill?.replace('N', '') || '1'), 1), 4) as 1 | 2 | 3 | 4,
-                  ward: (n.ward as any) || 'General', shifts: [], fatigue: n.fatigue_score || 50,
-                }))}
-                onNurseClick={(nurse) => setSelectedNurse(nurses.find(n => n.name === nurse.name) || null)}
-              />
-            </div>
-            <div className="col-span-7">
+            {/* WeeklySchedule - on the left (col-span-9) */}
+            <div className="col-span-9">
               <WeeklySchedule
                 nurses={nurses.map((n, idx) => ({
                   id: String(idx), name: n.name,
@@ -289,13 +279,20 @@ export default function Dashboard() {
                 staffingRequirements={scheduleData?.forecast}
               />
             </div>
+            {/* StaffPanel - combines StaffList and FatigueIndex on the right */}
             <div className="col-span-3">
-              <FatigueIndex
+              <StaffPanel
                 nurses={nurses.map((n, idx) => ({
-                  id: String(idx), name: n.name,
+                  id: String(idx),
+                  name: n.name,
                   skillLevel: Math.min(Math.max(parseInt(n.skill?.replace('N', '') || '1'), 1), 4) as 1 | 2 | 3 | 4,
-                  ward: (n.ward as any) || 'General', shifts: [], fatigue: n.fatigue_score || 50,
+                  ward: (n.ward as any) || 'General',
+                  fatigue: n.fatigue_score || 50,
+                  shifts: [],
+                  unavailable_days: n.unavailable_days || [],
                 }))}
+                schedule={schedule}
+                onNurseClick={(nurse) => setSelectedNurse(nurses.find(n => n.name === nurse.name) || null)}
               />
             </div>
           </div>
