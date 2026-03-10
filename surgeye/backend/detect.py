@@ -238,30 +238,6 @@ def get_alert_screenshots() -> List[str]:
     return sorted([f for f in os.listdir('alerts') if f.endswith('.jpg')], reverse=True)
 
 
-def count_by_class(detections: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """
-    Count instruments by class with confidence info.
-    
-    Returns:
-        Dictionary with count and average confidence per class
-    """
-    counts = {}
-    for d in detections:
-        cls = d['class']
-        if cls not in counts:
-            counts[cls] = {'count': 0, 'confidences': []}
-        counts[cls]['count'] += 1
-        counts[cls]['confidences'].append(d['confidence'])
-    
-    # Calculate average confidence
-    for cls in counts:
-        confs = counts[cls]['confidences']
-        counts[cls]['avg_confidence'] = round(sum(confs) / len(confs), 2) if confs else 0
-        del counts[cls]['confidences']  # Remove raw list
-    
-    return counts
-
-
 def count_by_class(detections: List[Dict[str, Any]]) -> Dict[str, int]:
     """
     Count instruments by class.
@@ -277,6 +253,24 @@ def count_by_class(detections: List[Dict[str, Any]]) -> Dict[str, int]:
         cls = d['class']
         counts[cls] = counts.get(cls, 0) + 1
     return counts
+
+
+def get_max_counts_from_frames(frames_detections: List[Dict[str, int]]) -> Dict[str, int]:
+    """
+    Get maximum count seen for each instrument class across multiple frames.
+    
+    Args:
+        frames_detections: List of count dictionaries from multiple frames
+        
+    Returns:
+        Dictionary with maximum count for each class
+    """
+    max_counts = {}
+    for frame_counts in frames_detections:
+        for cls, count in frame_counts.items():
+            if count > max_counts.get(cls, 0):
+                max_counts[cls] = count
+    return max_counts
 
 
 def export_to_onnx():

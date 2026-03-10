@@ -97,6 +97,24 @@ def init_database():
         )
     ''')
     
+    # Surgery sessions table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS surgery_sessions (
+            id TEXT PRIMARY KEY,
+            nurse_id TEXT NOT NULL,
+            nurse_name TEXT NOT NULL,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ended_at TIMESTAMP,
+            status TEXT DEFAULT 'active',
+            baseline_counts TEXT,
+            final_counts TEXT,
+            baseline_image TEXT,
+            postop_image TEXT,
+            investigation_id TEXT,
+            FOREIGN KEY (nurse_id) REFERENCES nurses(id)
+        )
+    ''')
+    
     conn.commit()
     conn.close()
     print("[DB] Database initialized successfully")
@@ -428,6 +446,93 @@ def get_investigation(investigation_id: str) -> Optional[Dict[str, Any]]:
         inv['report'] = json.loads(inv['report_json'])
     
     return inv
+
+
+# ============ Surgery Session Operations ============
+
+def create_surgery_session(nurse_id: str, nurse_name: str) -> str:
+    """Create a new surgery session."""
+    session_id = f'surgery-{uuid4().hex[:8]}'
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        INSERT INTO surgery_sessions (id, nurse_id, nurse_name, status)
+        VALUES (?, ?, ?, 'active')
+    ''', (session_id, nurse_id, nurse_name))
+    
+    conn.commit()
+    conn.close()
+    
+    return session_id
+
+
+def end_surgery_session(session_id: str) -> bool:
+    """End a surgery session."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        UPDATE surgery_sessions 
+        SET status = 'completed', ended_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    ''', (session_id,))
+    
+    conn.commit()
+    conn.close()
+    
+    return True
+
+
+def save_baseline_to_session(session_id: str, baseline_counts: Dict, baseline_image: str = None):
+    """Save baseline counts to session."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        UPDATE surgery_sessions 
+        SET baseline_counts = ?, baseline_image = ?
+        WHERE id = ?
+    ''', (json.dumps(baseline_counts), baseline_image, session_id))
+    
+    conn.commit()
+    conn.close()
+
+
+def save_postop_to_session(session_id: str, final_counts: Dict, postop_image: str = None, investigation_id: str = None):
+    """Save post-op results to session."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        UPDATE surgery_sessions 
+        SET final_counts = ?, postop_image = ?, investigation_id = ?
+        WHERE id = ?
+    ''', (json.dumps(final_counts), postop_image, investigation_id, session_id))
+    
+    conn.commit()
+    conn.close()
+
+
+def get_session(session_id: str) -> Optional[Dict[str, Any]]:
+    """Get surgery session by ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM surgery_sessions WHERE id = ?', (session_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return None
+    
+    session = dict(row)
+    if session.get('baseline_counts'):
+        session['baseline_counts'] = json.loads(session['baseline_counts'])
+    if session.get('final_counts'):
+        session['final_counts'] = json.loads(session['final_counts'])
+    
+    return session
 
 
 # ============ Surgery Assignment Operations ============

@@ -11,10 +11,14 @@ import json
 import asyncio
 from typing import Optional
 
-from detect import detect_frame, count_by_class, get_instrument_log, get_alert_screenshots
+from detect import detect_frame, count_by_class, get_max_counts_from_frames, get_instrument_log, get_alert_screenshots
 from tracker import tracker
 from rostering_agent import trigger_rostering_alert, rostering_agent
-from database import init_database, seed_dummy_data, get_all_nurses
+from database import (
+    init_database, seed_dummy_data, get_all_nurses,
+    create_surgery_session, end_surgery_session, save_baseline_to_session, 
+    save_postop_to_session, get_session
+)
 
 app = FastAPI(title="SurgEye API", version="1.0.0")
 
@@ -35,6 +39,9 @@ app.add_middleware(
 active_connections: list[WebSocket] = []
 video_source: Optional[cv2.VideoCapture] = None
 
+# Surgery session state
+active_session: Optional[Dict] = None
+
 
 @app.get("/")
 async def root():
@@ -44,40 +51,262 @@ async def root():
         "version": "1.0.0",
         "endpoints": [
             "/ws - WebSocket stream",
-            "/baseline - Set pre-op baseline",
-            "/check - Post-op check",
-            "/status - Current status"
+            "/api/session/start - Start surgery session",
+            "/api/session/end - End surgery session",
+            "/api/session/current - Get current session",
+            "/api/baseline - Set pre-op baseline",
+            "/api/postop - Post-op check",
+            "/api/status - Current status"
         ]
     }
 
 
-@app.post("/baseline")
-async def set_baseline():
+# ============ Session Management ============
+
+@app.post("/api/session/start")
+async def start_session(nurse_id: str = "nurse-001", nurse_name: str = "Sarah Chen"):
     """
-    Set the baseline instrument count at the start of procedure.
-    Uses current detection counts as baseline.
+    Start a new surgery session.
     """
-    # Get current counts from tracker
-    current = tracker.current
-    if not current:
-        return {"status": "error", "message": "No instruments detected - cannot set baseline"}
+    global active_session
+    from datetime import datetime
+    from uuid import uuid4
     
-    tracker.set_baseline(current)
+    session_id = create_surgery_session(nurse_id, nurse_name)
+    
+    active_session = {
+        "session_id": session_id,
+        "nurse_id": nurse_id,
+        "nurse_name": nurse_name,
+        "started_at": datetime.now().isoformat(),
+        "status": "active"
+    }
+    
+    # Reset tracker for new session
+    tracker.reset()
+    
     return {
-        "status": "baseline set",
-        "counts": current,
-        "timestamp": tracker.alert_history[-1]['timestamp'] if tracker.alert_history else None
+        "session_id": session_id,
+        "nurse": nurse_name,
+        "started_at": active_session["started_at"],
+        "status": "active"
     }
 
 
-@app.post("/check")
+@app.post("/api/session/end")
+async def end_session():
+    """
+    End the current surgery session.
+    """
+    global active_session
+    from datetime import datetime
+    
+    if not active_session:
+        return {"error": "No active session"}
+    
+    # End session in database
+    end_surgery_session(active_session["session_id"])
+    
+    started = datetime.fromisoformat(active_session["started_at"])
+    duration = datetime.now() - started
+    duration_mins = int(duration.total_seconds() / 60)
+    
+    result = {
+        "session_id": active_session["session_id"],
+        "duration": f"{duration_mins} mins",
+        "status": "complete"
+    }
+    
+    active_session = None
+    return result
+
+
+@app.get("/api/session/current")
+async def get_current_session():
+    """
+    Get current active session info.
+    """
+    if not active_session:
+        return {"active": False}
+    
+    from datetime import datetime
+    started = datetime.fromisoformat(active_session["started_at"])
+    duration = datetime.now() - started
+    duration_str = f"{int(duration.total_seconds() / 3600):02d}:{int((duration.total_seconds() % 3600) / 60):02d}:{int(duration.total_seconds() % 60):02d}"
+    
+    return {
+        "active": True,
+        "session_id": active_session["session_id"],
+        "nurse": active_session["nurse_name"],
+        "started_at": active_session["started_at"],
+        "duration": duration_str
+    }
+
+
+@app.post("/api/baseline")
+async def set_baseline():
+    """
+    Set the baseline instrument count at the start of procedure.
+    Captures 30 frames and takes maximum count seen for each instrument.
+    """
+    global active_session
+    from datetime import datetime
+    import base64
+    
+    if not active_session:
+        return {"status": "error", "message": "No active session - start session first"}
+    
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        return {"status": "error", "message": "Cannot open camera"}
+    
+    try:
+        # Warm up camera
+        for _ in range(5):
+            cap.read()
+        
+        # Capture 30 frames
+        all_counts = []
+        last_annotated_frame = None
+        
+        for i in range(30):
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            
+            # Resize for speed
+            frame = cv2.resize(frame, (640, 480))
+            
+            # Run detection
+            annotated, detections = detect_frame(frame, conf_threshold=0.5)
+            last_annotated_frame = annotated
+            
+            # Count instruments in this frame
+            counts = count_by_class(detections)
+            all_counts.append(counts)
+            
+            await asyncio.sleep(0.033)  # ~30 FPS
+        
+        # Get maximum count for each instrument across all frames
+        baseline_counts = get_max_counts_from_frames(all_counts)
+        
+        # Set baseline in tracker
+        tracker.set_baseline(baseline_counts)
+        tracker.baseline_timestamp = datetime.now().isoformat()
+        
+        # Save baseline screenshot
+        screenshot_b64 = None
+        if last_annotated_frame is not None:
+            _, buf = cv2.imencode('.jpg', last_annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            screenshot_b64 = base64.b64encode(buf).decode()
+            tracker.baseline_image = screenshot_b64
+        
+        # Save to database
+        save_baseline_to_session(active_session["session_id"], baseline_counts, screenshot_b64)
+        
+        return {
+            "status": "baseline locked",
+            "baseline": baseline_counts,
+            "screenshot": screenshot_b64,
+            "session_id": active_session["session_id"],
+            "timestamp": tracker.baseline_timestamp
+        }
+        
+    finally:
+        cap.release()
+
+
+@app.post("/api/postop")
 async def postop_check():
     """
     Perform post-operative instrument count check.
-    Returns PASS or FAIL based on baseline comparison.
+    Captures 30 frames and compares against baseline.
     """
-    result = tracker.check_postop()
-    return result
+    global active_session
+    from datetime import datetime
+    import base64
+    
+    if not active_session:
+        return {"status": "error", "message": "No active session"}
+    
+    if not tracker.is_baseline_set():
+        return {"status": "error", "message": "Please set baseline first"}
+    
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        return {"status": "error", "message": "Cannot open camera"}
+    
+    try:
+        # Warm up camera
+        for _ in range(5):
+            cap.read()
+        
+        # Capture 30 frames
+        all_counts = []
+        last_annotated_frame = None
+        
+        for i in range(30):
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            
+            frame = cv2.resize(frame, (640, 480))
+            annotated, detections = detect_frame(frame, conf_threshold=0.5)
+            last_annotated_frame = annotated
+            
+            counts = count_by_class(detections)
+            all_counts.append(counts)
+            
+            await asyncio.sleep(0.033)
+        
+        # Get maximum count for each instrument
+        final_counts = get_max_counts_from_frames(all_counts)
+        
+        # Compare against baseline
+        result = tracker.check_postop(final_counts)
+        
+        # Save post-op screenshot
+        postop_image_b64 = None
+        if last_annotated_frame is not None:
+            _, buf = cv2.imencode('.jpg', last_annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            postop_image_b64 = base64.b64encode(buf).decode()
+        
+        result["postop_image"] = postop_image_b64
+        result["session_id"] = active_session["session_id"]
+        
+        investigation_id = None
+        
+        # If failed, trigger investigation
+        if not result["passed"]:
+            evidence = {
+                "baseline_image": tracker.baseline_image,
+                "postop_image": postop_image_b64,
+                "timeline": result.get("timeline_log", [])
+            }
+            
+            rostering_result = await trigger_rostering_alert(
+                missing_items=result["missing"],
+                nurse_id=active_session["nurse_id"],
+                nurse_name=active_session["nurse_name"],
+                session_id=active_session["session_id"],
+                evidence=evidence
+            )
+            
+            result["investigation"] = rostering_result
+            investigation_id = rostering_result.get("investigation_id")
+        
+        # Save to database
+        save_postop_to_session(
+            active_session["session_id"], 
+            final_counts, 
+            postop_image_b64, 
+            investigation_id
+        )
+        
+        return result
+        
+    finally:
+        cap.release()
 
 
 @app.get("/status")
@@ -383,17 +612,17 @@ async def websocket_stream(websocket: WebSocket):
                         # Get missing items from tracker
                         missing = {}
                         if tracker.baseline:
-                            for cls, info in tracker.baseline.items():
-                                current_count = last_counts.get(cls, {}).get('count', 0)
-                                if current_count < info.get('count', 0):
-                                    missing[cls] = info.get('count', 0) - current_count
+                            for cls, expected in tracker.baseline.items():
+                                current_count = last_counts.get(cls, 0)
+                                if current_count < expected:
+                                    missing[cls] = expected - current_count
                         
-                        if missing and not pending_investigation:
+                        if missing and not pending_investigation and active_session:
                             # Trigger rostering agent
                             result = await trigger_rostering_alert(
                                 missing_items=missing,
-                                nurse_id="nurse-001",  # Demo: hardcoded
-                                nurse_name="Sarah Chen"
+                                nurse_id=active_session["nurse_id"],
+                                nurse_name=active_session["nurse_name"]
                             )
                             pending_investigation = result
                 except Exception as e:
@@ -415,7 +644,9 @@ async def websocket_stream(websocket: WebSocket):
                 'alerts': alerts,
                 'procedure_started': tracker.procedure_started,
                 'procedure_ended': tracker.procedure_ended,
-                'baseline': tracker.baseline if tracker.procedure_started else None
+                'baseline': tracker.baseline if tracker.procedure_started else None,
+                'baseline_timestamp': tracker.baseline_timestamp,
+                'session': active_session
             }
             
             # Add investigation info if triggered
