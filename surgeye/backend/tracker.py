@@ -15,41 +15,62 @@ class InstrumentTracker:
     """
     
     def __init__(self):
-        self.baseline: Dict[str, Dict] = {}  # Set at pre-op (with confidence)
-        self.current: Dict[str, Dict] = {}   # Current frame counts (with confidence)
+        self.baseline: Dict[str, int] = {}  # Set at pre-op - simple counts
+        self.current: Dict[str, int] = {}   # Current frame counts
         self.alerts: List[str] = []          # Active alerts
         self.alert_history: List[Dict] = []  # All alerts with timestamps
         self.procedure_started = False
         self.procedure_ended = False
         self.previous_counts: Dict[str, int] = {}  # For detecting changes
         self.alert_screenshots: List[str] = []     # Paths to alert images
+        self.baseline_timestamp: Optional[str] = None  # When baseline was set
+        self.baseline_image: Optional[str] = None  # Screenshot of baseline
         
-    def set_baseline(self, counts: Dict[str, Dict]):
+    def set_baseline(self, counts: Dict[str, int]):
         """
         Set the baseline instrument count at the start of procedure.
         
         Args:
-            counts: Dictionary mapping instrument class to count info
+            counts: Dictionary mapping instrument class to count (e.g., {'Forceps': 2, 'Hemostat': 1})
         """
         self.baseline = counts.copy()
         self.procedure_started = True
         self.procedure_ended = False
         self.alerts = []
         self.alert_screenshots = []
+        self.baseline_timestamp = datetime.now().isoformat()
         clear_instrument_log()
         
         # Log baseline instruments
-        for cls, info in counts.items():
-            log_event(cls, 'baseline_set', info.get('avg_confidence'))
+        for cls, count in counts.items():
+            log_event(cls, 'baseline_set', count)
         
         print(f"[SurgEye] Baseline set: {self.baseline}")
         
-    def update(self, counts: Dict[str, Dict], current_frame=None) -> List[str]:
+    def get_baseline(self) -> Dict[str, int]:
+        """
+        Get the current baseline counts.
+        
+        Returns:
+            Dictionary mapping instrument class to count
+        """
+        return self.baseline.copy()
+    
+    def is_baseline_set(self) -> bool:
+        """
+        Check if baseline has been set.
+        
+        Returns:
+            True if baseline is set, False otherwise
+        """
+        return self.procedure_started and len(self.baseline) > 0
+        
+    def update(self, counts: Dict[str, int], current_frame=None) -> List[str]:
         """
         Update current counts and generate alerts for missing instruments.
         
         Args:
-            counts: Current instrument counts from detection
+            counts: Current instrument counts from detection (simple dict like {'Forceps': 2})
             current_frame: Optional frame for screenshot capture
             
         Returns:
@@ -61,15 +82,9 @@ class InstrumentTracker:
         self.current = counts.copy()
         new_alerts = []
         
-        # Get simple counts for comparison
-        current_simple = {cls: info['count'] for cls, info in counts.items()}
-        baseline_simple = {cls: info['count'] for cls, info in self.baseline.items()}
-        
         # Check for missing instruments
-        for cls, expected_info in self.baseline.items():
-            expected = expected_info['count']
-            actual_info = counts.get(cls, {'count': 0})
-            actual = actual_info['count']
+        for cls, expected in self.baseline.items():
+            actual = counts.get(cls, 0)
             
             if actual < expected:
                 missing = expected - actual
@@ -87,7 +102,7 @@ class InstrumentTracker:
                     })
                     
                     # Log the missing event
-                    log_event(cls, 'missing', actual_info.get('avg_confidence'))
+                    log_event(cls, 'missing', actual)
                     
                     # Save screenshot if frame provided
                     if current_frame is not None:
@@ -97,16 +112,15 @@ class InstrumentTracker:
         # Check for returned instruments (were missing, now present)
         for cls in self.baseline:
             prev_count = self.previous_counts.get(cls, 0)
-            curr_count = current_simple.get(cls, 0)
-            expected = baseline_simple.get(cls, 0)
+            curr_count = counts.get(cls, 0)
+            expected = self.baseline.get(cls, 0)
             
             if prev_count < expected and curr_count == expected:
-                log_event(cls, 'returned', counts.get(cls, {}).get('avg_confidence'))
+                log_event(cls, 'returned', curr_count)
         
         # Check for unexpected instruments (possible contamination)
-        for cls, actual_info in counts.items():
-            actual = actual_info['count']
-            expected = baseline_simple.get(cls, 0)
+        for cls, actual in counts.items():
+            expected = self.baseline.get(cls, 0)
             if actual > expected:
                 extra = actual - expected
                 alert_msg = f"EXTRA: {extra}x {cls} (not in baseline)"
@@ -116,19 +130,31 @@ class InstrumentTracker:
         # Log newly detected instruments
         for cls in counts:
             if cls not in self.previous_counts or self.previous_counts.get(cls, 0) == 0:
-                if counts[cls]['count'] > 0:
-                    log_event(cls, 'detected', counts[cls].get('avg_confidence'))
+                if counts[cls] > 0:
+                    log_event(cls, 'detected', counts[cls])
         
         self.alerts = new_alerts
-        self.previous_counts = current_simple
+        self.previous_counts = counts.copy()
         return new_alerts
     
-    def check_postop(self) -> Dict:
+    def check_postop(self, final_counts: Dict[str, int] = None) -> Dict:
         """
         Perform post-operative instrument count check.
         
+        Args:
+            final_counts: Optional final counts to compare against baseline.
+                         If not provided, uses self.current
+        
         Returns:
-            Dictionary with check results
+            Dictionary with detailed check results:
+            {
+                "passed": True/False,
+                "baseline": {"Forceps": 2, "Hemostat": 1},
+                "final": {"Forceps": 2, "Hemostat": 0},
+                "missing": {"Hemostat": 1},
+                "extra": {},
+                "summary": "MISSING: 1x Hemostat"
+            }
         """
         if not self.procedure_started:
             return {
@@ -138,29 +164,48 @@ class InstrumentTracker:
         
         self.procedure_ended = True
         
-        # Compare current to baseline
-        mismatches = []
+        # Use provided final counts or current counts
+        final = final_counts if final_counts is not None else self.current
+        
+        # Calculate missing and extra items
+        missing = {}
+        extra = {}
         all_match = True
         
-        baseline_simple = {cls: info['count'] for cls, info in self.baseline.items()}
-        current_simple = {cls: info['count'] for cls, info in self.current.items()}
-        
-        for cls, expected in baseline_simple.items():
-            actual = current_simple.get(cls, 0)
-            if actual != expected:
+        # Check for missing items (less than baseline)
+        for cls, expected in self.baseline.items():
+            actual = final.get(cls, 0)
+            if actual < expected:
+                missing[cls] = expected - actual
                 all_match = False
-                mismatches.append({
-                    'class': cls,
-                    'expected': expected,
-                    'actual': actual,
-                    'difference': actual - expected
-                })
+        
+        # Check for extra items (more than baseline)
+        for cls, actual in final.items():
+            expected = self.baseline.get(cls, 0)
+            if actual > expected:
+                extra[cls] = actual - expected
+                all_match = False
+        
+        # Build summary message
+        summary_parts = []
+        if missing:
+            for cls, count in missing.items():
+                summary_parts.append(f"{count}x {cls}")
+            summary = "MISSING: " + ", ".join(summary_parts)
+        elif extra:
+            for cls, count in extra.items():
+                summary_parts.append(f"{count}x {cls}")
+            summary = "EXTRA: " + ", ".join(summary_parts)
+        else:
+            summary = "All instruments accounted for"
         
         return {
             'passed': all_match,
-            'baseline': baseline_simple,
-            'final': current_simple,
-            'mismatches': mismatches,
+            'baseline': self.baseline.copy(),
+            'final': final.copy(),
+            'missing': missing,
+            'extra': extra,
+            'summary': summary,
             'alerts': self.alerts,
             'alert_history': self.alert_history,
             'timeline_log': get_instrument_log(),
@@ -174,18 +219,17 @@ class InstrumentTracker:
         Returns:
             Status dictionary
         """
-        baseline_simple = {cls: info['count'] for cls, info in self.baseline.items()} if self.baseline else {}
-        current_simple = {cls: info['count'] for cls, info in self.current.items()} if self.current else {}
-        
         return {
             'procedure_started': self.procedure_started,
             'procedure_ended': self.procedure_ended,
-            'baseline': baseline_simple,
-            'current': current_simple,
+            'baseline': self.baseline.copy() if self.baseline else {},
+            'current': self.current.copy() if self.current else {},
             'alerts': self.alerts,
             'alert_count': len(self.alerts),
             'timeline_log': get_instrument_log(),
-            'alert_screenshots': self.alert_screenshots
+            'alert_screenshots': self.alert_screenshots,
+            'baseline_timestamp': self.baseline_timestamp,
+            'baseline_image': self.baseline_image
         }
     
     def reset(self):
@@ -198,6 +242,8 @@ class InstrumentTracker:
         self.alert_screenshots = []
         self.procedure_started = False
         self.procedure_ended = False
+        self.baseline_timestamp = None
+        self.baseline_image = None
         clear_instrument_log()
 
 
