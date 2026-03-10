@@ -25,21 +25,85 @@ def call_llm(prompt: str) -> str:
     client = Groq(api_key=api_key)
     
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",  # Better quality for complex JSON
+        model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": "You are an expert nurse scheduling AI for a Malaysian hospital following KKM guidelines."},
             {"role": "user", "content": prompt}
         ],
-        temperature=0.1,  # Lower temperature for strict rule-following
+        temperature=0.1,
         max_tokens=2048
     )
     
     return response.choices[0].message.content
 
 
+def enforce_minimum_coverage(
+    schedule: Dict[str, Dict[str, List[str]]],
+    nurses: List[Dict[str, Any]],
+    min_per_shift: int = 3
+) -> Dict[str, Dict[str, List[str]]]:
+    """
+    Post-processing: guarantee every shift has at least min_per_shift nurses.
+    Priority order for gap-filling:
+      1. Nurses not scheduled on that day at all (fresh)
+      2. Nurses already on a different shift that day (add as extra only if under weekly limit)
+    Never assign a nurse to the same shift twice on the same day.
+    """
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    shifts = ["morning", "afternoon", "night"]
+
+    # Build weekly shift count per nurse
+    weekly_count: Dict[str, int] = {n["name"]: 0 for n in nurses}
+    for day in days:
+        for shift in shifts:
+            for name in schedule[day].get(shift, []):
+                weekly_count[name] = weekly_count.get(name, 0) + 1
+
+    nurse_list = [n["name"] for n in nurses]
+    nurse_unavail = {n["name"]: set(n.get("unavailable_days", [])) for n in nurses}
+
+    for day in days:
+        for shift in shifts:
+            current = schedule[day].get(shift, [])
+            if len(current) >= min_per_shift:
+                continue  # Already covered
+
+            # Who is assigned to anything on this day?
+            assigned_today = set()
+            for s in shifts:
+                assigned_today.update(schedule[day].get(s, []))
+
+            # Phase 1: nurses not working at all today and available and under weekly limit
+            candidates_fresh = [
+                n for n in nurse_list
+                if n not in assigned_today
+                and day not in nurse_unavail.get(n, set())
+                and weekly_count.get(n, 0) < 5
+                and n not in current
+            ]
+
+            # Phase 2: nurses already working today but not on this shift (double-shift fallback)
+            candidates_extra = [
+                n for n in nurse_list
+                if n in assigned_today
+                and n not in current
+                and day not in nurse_unavail.get(n, set())
+                and weekly_count.get(n, 0) < 5
+            ]
+
+            pool = candidates_fresh + candidates_extra
+
+            while len(schedule[day][shift]) < min_per_shift and pool:
+                chosen = pool.pop(0)
+                schedule[day][shift].append(chosen)
+                weekly_count[chosen] = weekly_count.get(chosen, 0) + 1
+
+    return schedule
+
+
 class SchedulingAgent:
     """AI Agent for generating and explaining nurse schedules."""
-    
+
     def generate(
         self,
         nurses: List[Dict[str, Any]],
@@ -49,10 +113,13 @@ class SchedulingAgent:
         """Generate a weekly schedule for nurses."""
         prompt = f"""You are scheduling nurses for a Malaysian hospital following Kementerian Kesihatan Malaysia (KKM) rostering guidelines.
 
-SHIFT NAMES TO USE:
-- "morning" (AM 7am-3pm)
-- "afternoon" (DA 3pm-11pm)
-- "night" (EV 11pm-7am)
+SHIFT TIMES:
+- "morning"   = AM  07:00–15:00
+- "afternoon" = DA  15:00–23:00  
+- "night"     = EV  23:00–07:00 (next day)
+
+CRITICAL: The hospital operates 24 hours a day, 7 days a week.
+ALL THREE SHIFTS MUST BE COVERED EVERY DAY. There must NEVER be an empty night shift.
 
 NURSES:
 {json.dumps(nurses, indent=2, ensure_ascii=False)}
@@ -60,188 +127,143 @@ NURSES:
 RULES:
 {json.dumps(rules, indent=2, ensure_ascii=False)}
 
-STAFFING REQUIREMENTS (min nurses per shift):
+STAFFING REQUIREMENTS (min nurses per shift per day):
 {json.dumps(staffing_requirements, indent=2, ensure_ascii=False)}
 
-Follow this EXACT assignment priority order used by Malaysian hospitals:
+MANDATORY SCHEDULING RULES (follow in order):
 
-STEP 1 — PREAPPROVED REQUESTS FIRST:
-Check each nurse's unavailable_days. These are preapproved requests.
-Never schedule any nurse on their unavailable_days under any circumstance.
+STEP 1 — PREAPPROVED REQUESTS:
+Never schedule a nurse on their unavailable_days. These are fixed.
 
-STEP 2 — NIGHT SHIFT ASSIGNMENT:
-Assign EV (night) shifts first before any other shifts.
-Group night shifts in blocks of exactly 3 consecutive nights.
-After every 3 consecutive EV nights, the nurse gets 1 SD day (no shifts) 
-then 1 DO day (no shifts).
+STEP 2 — NIGHT SHIFT FIRST (most important):
+Assign EV (night) shifts first. Night shifts are 23:00–07:00.
+Every night shift MUST have at least 3 nurses.
+If a nurse works 3 consecutive nights, they get the next day off (SD then DO).
+Rotate night duty fairly — no nurse should work more than 3 night shifts per week.
 
-STEP 3 — WEEKLY DAY OFF DISTRIBUTION:
-Every nurse must have exactly 1 DO day per week with zero shifts.
-Spread DO days across different days of the week to ensure coverage.
+STEP 3 — DAY SHIFTS:
+Fill morning (07:00–15:00) and afternoon (15:00–23:00) shifts.
+Each must have at least 3 nurses.
+Maintain at least 55% senior nurses (N3/N4) per shift.
 
-STEP 4 — DAY SHIFT COMPLETION:
-Fill remaining AM (morning) and DA (afternoon) shifts.
-Ensure each shift has minimum 3 nurses.
-Maintain 60% senior (N3/N4) to 40% junior (N1/N2) ratio per shift.
+STEP 4 — DAY OFF:
+Every nurse must have exactly 1 full day off (DO) with zero shifts.
 
-STEP 5 — GAP FILLING:
-Check all shifts. If any shift has fewer than 3 nurses, 
-add available nurses who have not exceeded their weekly limit.
+STEP 5 — LIMITS:
+- Max 5 shifts per nurse per week
+- No more than 3 consecutive same-type shifts in a row
+- Fair distribution across all nurses
 
-Follow these steps IN ORDER. Do not skip steps.
+IMPORTANT OUTPUT RULES:
+- ALL 7 days must appear
+- ALL 3 shifts per day must appear (morning, afternoon, night)
+- NEVER leave night shift empty — the hospital does not close at night
+- Return ONLY valid JSON, no explanation
 
-ADDITIONAL MANDATORY RULES:
-
-1. EVERY NURSE MUST HAVE EXACTLY 1 DAY OFF (DO)
-   - Each nurse must have exactly 1 day with NO shifts assigned
-   - This is their DO (day off) - mandatory under Malaysian labour law
-
-2. NIGHT SHIFT PATTERN (EV SHIFTS)
-   - If assigning night shifts to a nurse, assign EXACTLY 3 CONSECUTIVE nights
-   - After 3 consecutive nights, the next day must be SD (sleeping day - no shifts)
-   - Then the following day must be DO (day off - no shifts)
-   - Pattern: EV + EV + EV + SD + DO
-   - Exception: 4 consecutive EV allowed with SD + DO + DO recovery
-
-3. CONSECUTIVE SHIFT LIMITS
-   - Never assign more than 3 consecutive morning-only shifts to one nurse
-   - Never assign more than 3 consecutive afternoon-only shifts to one nurse
-   - Break the pattern with a different shift type or day off
-
-4. MINIMUM 3 NURSES PER SHIFT
-   - Each shift must have at least 3 nurses assigned
-   - No exceptions - patient safety requirement
-
-5. SENIOR NURSE RATIO (55% MINIMUM)
-   - Each shift must have at least 55% senior nurses (skill level N3 or N4)
-   - Calculate: (number of N3+N4 nurses) / (total nurses in shift) >= 0.55
-   - Round up - if 3 nurses needed, at least 2 must be senior
-
-6. RESPECT UNAVAILABLE DAYS
-   - Never assign shifts on days marked in unavailable_days
-   - These are the nurse's confirmed days off
-
-7. MAXIMUM 5 SHIFTS PER WEEK
-   - No nurse can work more than 5 shifts total per week
-   - This includes all shift types combined
-
-8. FAIR DISTRIBUTION
-   - Distribute shifts across ALL nurses fairly
-   - Don't overload some nurses while others have minimal shifts
-   - Consider skill levels when assigning (N4 > N3 > N2 > N1 for complex cases)
-
-OUTPUT: Return ONLY valid JSON with this structure:
+OUTPUT FORMAT:
 {{
-  "Monday": {{"morning": ["name1", "name2", "name3"], "afternoon": ["name4", "name5", "name6"], "night": ["name7", "name8", "name9"]}},
-  "Tuesday": {{"morning": [], "afternoon": [], "night": []}},
-  ... through Sunday
-}}
+  "Monday":    {{"morning": ["name1", "name2", "name3"], "afternoon": ["name4", "name5", "name6"], "night": ["name7", "name8", "name9"]}},
+  "Tuesday":   {{"morning": [], "afternoon": [], "night": []}},
+  "Wednesday": {{"morning": [], "afternoon": [], "night": []}},
+  "Thursday":  {{"morning": [], "afternoon": [], "night": []}},
+  "Friday":    {{"morning": [], "afternoon": [], "night": []}},
+  "Saturday":  {{"morning": [], "afternoon": [], "night": []}},
+  "Sunday":    {{"morning": [], "afternoon": [], "night": []}}
+}}"""
 
-Ensure ALL 7 days are included. No explanation, only JSON."""
-        
         response = call_llm(prompt)
-        
-        # Extract JSON from response
+
+        # Extract JSON
         text = response.strip()
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0].strip()
         elif "```" in text:
             text = text.split("```")[1].split("```")[0].strip()
-        
+
         schedule = json.loads(text)
-        
+
         # Ensure all days and shifts exist
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        shifts = ["morning", "afternoon", "night"]
-        
+        shifts_list = ["morning", "afternoon", "night"]
         for day in days:
             if day not in schedule:
                 schedule[day] = {}
-            for shift in shifts:
+            for shift in shifts_list:
                 if shift not in schedule[day]:
                     schedule[day][shift] = []
-        
+
+        # Post-processing: enforce minimum 3 nurses on every shift
+        # This is the safety net — the LLM should handle it, but we guarantee it here
+        schedule = enforce_minimum_coverage(schedule, nurses, min_per_shift=3)
+
         return schedule
-    
+
     def explain(self, nurse_name: str, schedule: Dict[str, Dict[str, List[str]]]) -> str:
         """Generate a 2-sentence explanation for a nurse's schedule."""
-        # Extract nurse's assigned shifts
         assigned_shifts = []
         for day, shifts in schedule.items():
-            for shift_type, nurses in shifts.items():
-                if nurse_name in nurses:
+            for shift_type, nurse_list in shifts.items():
+                if nurse_name in nurse_list:
                     assigned_shifts.append(f"{day} {shift_type}")
-        
+
         prompt = f"""Explain why {nurse_name} was assigned these shifts.
 
 Assigned Shifts ({len(assigned_shifts)}):
 {chr(10).join(f"- {s}" for s in assigned_shifts) if assigned_shifts else "No shifts assigned"}
 
-Full Schedule:
-{json.dumps(schedule, indent=2, ensure_ascii=False)}
-
 Write exactly 2 sentences explaining the scheduling decision based on fairness, skills, or staffing needs. No bullet points."""
-        
-        response = call_llm(prompt)
-        return response.strip()
+
+        return call_llm(prompt).strip()
 
 
 if __name__ == "__main__":
-    # Sample test data
     sample_nurses = [
         {"name": "Zhang Wei", "skill": "N4", "ward": "ICU", "unavailable_days": ["Saturday", "Sunday"]},
-        {"name": "Li Hua", "skill": "N3", "ward": "ICU", "unavailable_days": []},
-        {"name": "Wang Fang", "skill": "N3", "ward": "ER", "unavailable_days": ["Monday"]},
-        {"name": "Liu Ming", "skill": "N2", "ward": "ER", "unavailable_days": []},
+        {"name": "Li Hua",    "skill": "N3", "ward": "ICU", "unavailable_days": []},
+        {"name": "Wang Fang", "skill": "N3", "ward": "ER",  "unavailable_days": ["Monday"]},
+        {"name": "Liu Ming",  "skill": "N2", "ward": "ER",  "unavailable_days": []},
         {"name": "Chen Jing", "skill": "N2", "ward": "General", "unavailable_days": ["Wednesday"]},
-        {"name": "Yang Li", "skill": "N1", "ward": "General", "unavailable_days": []},
-        {"name": "Zhao Qiang", "skill": "N4", "ward": "ICU", "unavailable_days": ["Friday"]},
-        {"name": "Wu Ying", "skill": "N3", "ward": "ER", "unavailable_days": []},
+        {"name": "Yang Li",   "skill": "N1", "ward": "General", "unavailable_days": []},
+        {"name": "Zhao Qiang","skill": "N4", "ward": "ICU", "unavailable_days": ["Friday"]},
+        {"name": "Wu Ying",   "skill": "N3", "ward": "ER",  "unavailable_days": []},
     ]
-    
+
     sample_rules = {
         "max_shifts_per_week": 5,
         "ward_skill_requirements": {
             "ICU": {"min_skill": "N3"},
-            "ER": {"min_skill": "N2"},
+            "ER":  {"min_skill": "N2"},
             "General": {"min_skill": "N1"}
         }
     }
-    
+
     sample_staffing = {
-        "Monday": {"morning": 3, "afternoon": 3, "night": 2},
-        "Tuesday": {"morning": 3, "afternoon": 3, "night": 2},
-        "Wednesday": {"morning": 3, "afternoon": 3, "night": 2},
-        "Thursday": {"morning": 3, "afternoon": 3, "night": 2},
-        "Friday": {"morning": 3, "afternoon": 3, "night": 2},
-        "Saturday": {"morning": 2, "afternoon": 2, "night": 2},
-        "Sunday": {"morning": 2, "afternoon": 2, "night": 2},
+        "Monday":    {"morning": 3, "afternoon": 3, "night": 3},
+        "Tuesday":   {"morning": 3, "afternoon": 3, "night": 3},
+        "Wednesday": {"morning": 3, "afternoon": 3, "night": 3},
+        "Thursday":  {"morning": 3, "afternoon": 3, "night": 3},
+        "Friday":    {"morning": 3, "afternoon": 3, "night": 3},
+        "Saturday":  {"morning": 2, "afternoon": 2, "night": 2},
+        "Sunday":    {"morning": 2, "afternoon": 2, "night": 2},
     }
-    
+
     agent = SchedulingAgent()
-    
     print("=" * 60)
     print("GENERATING SCHEDULE...")
     print("=" * 60)
-    
+
     try:
         schedule = agent.generate(sample_nurses, sample_rules, sample_staffing)
-        
+
         print("\nGENERATED SCHEDULE:")
         print("=" * 60)
         for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]:
             print(f"\n{day}:")
             for shift in ["morning", "afternoon", "night"]:
-                nurses = schedule[day][shift]
-                print(f"  {shift.capitalize()}: {', '.join(nurses) if nurses else '(no nurses)'}")
-        
-        # Test explanation
-        print("\n" + "=" * 60)
-        print("EXPLANATION FOR Zhang Wei:")
-        print("=" * 60)
-        explanation = agent.explain("Zhang Wei", schedule)
-        print(explanation)
-        
+                ns = schedule[day][shift]
+                count = len(ns)
+                flag = " ⚠️ UNDERSTAFFED" if count < 3 else ""
+                print(f"  {shift.capitalize():10} ({count}): {', '.join(ns) if ns else '(EMPTY)'}{flag}")
+
     except Exception as e:
         print(f"Error: {e}")
-        print("\nNote: Make sure to set GROQ_API_KEY environment variable.")

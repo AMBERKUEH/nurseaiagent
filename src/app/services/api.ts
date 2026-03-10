@@ -92,6 +92,96 @@ export async function generateSchedule(
   }
 }
 
+// POST /api/agent/forecast - Step 1: Forecast Agent
+export async function runForecastAgent(
+  nurses: any[]
+): Promise<{
+  step: string;
+  status: string;
+  staffing_requirements: Record<string, number>;
+} | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/agent/forecast`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nurses }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      showError(`Forecast Agent failed — ${error.detail || 'Unknown error'}`);
+      return null;
+    }
+
+    return await response.json();
+  } catch (err) {
+    showError("Network error during forecast — check backend is running");
+    return null;
+  }
+}
+
+// POST /api/agent/schedule - Step 2: Scheduling Agent
+export async function runScheduleAgent(
+  nurses: any[],
+  staffingRequirements: Record<string, number>
+): Promise<{
+  step: string;
+  status: string;
+  schedule: any;
+} | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/agent/schedule`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nurses, staffing_requirements: staffingRequirements }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      showError(`Scheduling Agent failed — ${error.detail || 'Unknown error'}`);
+      return null;
+    }
+
+    return await response.json();
+  } catch (err) {
+    showError("Network error during scheduling — check backend is running");
+    return null;
+  }
+}
+
+// POST /api/agent/compliance - Step 3: Compliance Agent
+export async function runComplianceAgent(
+  schedule: any,
+  nurses: any[]
+): Promise<{
+  step: string;
+  status: string;
+  compliance: {
+    status: string;
+    reasons: string[];
+    score: number;
+  };
+} | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/agent/compliance`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ schedule, nurses }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      showError(`Compliance Agent failed — ${error.detail || 'Unknown error'}`);
+      return null;
+    }
+
+    return await response.json();
+  } catch (err) {
+    showError("Network error during compliance check — check backend is running");
+    return null;
+  }
+}
+
 // POST /api/emergency - Handle emergency disruption
 export async function handleEmergency(
   disruption: string,

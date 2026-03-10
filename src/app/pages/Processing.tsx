@@ -1,19 +1,25 @@
 import { CheckCircle, Circle, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { generateSchedule } from '../services/api';
-
-const initialSteps = [
-  { label: 'PDF received', status: 'complete' as const },
-  { label: 'OCR complete — 8 nurses extracted', status: 'complete' as const },
-  { label: 'Forecast Agent analysing...', status: 'pending' as const },
-  { label: 'Scheduling Agent...', status: 'pending' as const },
-  { label: 'Compliance Agent...', status: 'pending' as const },
-  { label: 'Schedule ready', status: 'pending' as const },
-];
+import { runForecastAgent, runScheduleAgent, runComplianceAgent } from '../services/api';
+import { LiquidGradientBg } from '../components/LiquidGradientBg';
 
 export default function Processing() {
   const navigate = useNavigate();
+  
+  // Get nurse count from localStorage for display
+  const nursesData = localStorage.getItem('nurses');
+  const nurseCount = nursesData ? JSON.parse(nursesData).length : 0;
+  
+  const initialSteps = [
+    { label: 'PDF received', status: 'complete' as const },
+    { label: `OCR complete — ${nurseCount} nurses extracted`, status: 'complete' as const },
+    { label: 'Forecast Agent analysing...', status: 'pending' as 'pending' | 'loading' | 'complete' },
+    { label: 'Scheduling Agent...', status: 'pending' as 'pending' | 'loading' | 'complete' },
+    { label: 'Compliance Agent...', status: 'pending' as 'pending' | 'loading' | 'complete' },
+    { label: 'Schedule ready', status: 'pending' as 'pending' | 'loading' | 'complete' },
+  ];
+  
   const [progress, setProgress] = useState(33);
   const [steps, setSteps] = useState(initialSteps);
   const [error, setError] = useState<string | null>(null);
@@ -21,56 +27,85 @@ export default function Processing() {
 
   useEffect(() => {
     const runGeneration = async () => {
-      // Step 3: Forecast Agent (800ms delay)
-      await new Promise((r) => setTimeout(r, 800));
+      // Get nurses from localStorage
+      const nursesData = localStorage.getItem('nurses');
+      const nurses = nursesData ? JSON.parse(nursesData) : [];
+      
+      if (nurses.length === 0) {
+        setError('No nurse data found. Please upload a PDF first.');
+        return;
+      }
+
+      // Step 3: Forecast Agent (REAL API CALL)
+      setSteps((prev) => prev.map((s, i) => 
+        i === 2 ? { ...s, status: 'loading' as const } : s
+      ));
+      
+      const forecastResult = await runForecastAgent(nurses);
+      if (!forecastResult) {
+        setError('Forecast Agent failed. Please try again.');
+        return;
+      }
+      
       setSteps((prev) => prev.map((s, i) => 
         i === 2 ? { ...s, status: 'complete' as const } : 
-        i === 3 ? { ...s, label: 'Scheduling Agent analysing...', status: 'loading' as const } : s
+        i === 3 ? { ...s, status: 'loading' as const } : s
       ));
       setProgress(50);
 
-      // Step 4: Scheduling Agent (800ms delay)
-      await new Promise((r) => setTimeout(r, 800));
+      // Step 4: Scheduling Agent (REAL API CALL)
+      const scheduleResult = await runScheduleAgent(nurses, forecastResult.staffing_requirements);
+      if (!scheduleResult) {
+        setError('Scheduling Agent failed. Please try again.');
+        return;
+      }
+      
       setSteps((prev) => prev.map((s, i) => 
         i === 3 ? { ...s, status: 'complete' as const } : 
-        i === 4 ? { ...s, label: 'Compliance Agent analysing...', status: 'loading' as const } : s
+        i === 4 ? { ...s, status: 'loading' as const } : s
       ));
       setProgress(75);
 
-      // Step 5: Compliance Agent (800ms delay)
-      await new Promise((r) => setTimeout(r, 800));
+      // Step 5: Compliance Agent (REAL API CALL)
+      const complianceResult = await runComplianceAgent(scheduleResult.schedule, nurses);
+      if (!complianceResult) {
+        setError('Compliance Agent failed. Please try again.');
+        return;
+      }
+      
       setSteps((prev) => prev.map((s, i) => 
         i === 4 ? { ...s, status: 'complete' as const } : s
       ));
       setProgress(90);
 
-      // Call actual API
-      const result = await generateSchedule();
-
-      if (result) {
-        // Save to localStorage
-        localStorage.setItem('scheduleData', JSON.stringify(result));
-        
-        // Step 6: Complete
-        setSteps((prev) => prev.map((s, i) => 
-          i === 5 ? { ...s, status: 'complete' as const } : s
-        ));
-        setProgress(100);
-        setIsComplete(true);
-        
-        // Navigate after short delay
-        setTimeout(() => navigate('/dashboard'), 500);
-      } else {
-        setError('Failed to generate schedule. Please try again.');
-      }
+      // Combine all results and save
+      const finalResult = {
+        schedule: scheduleResult.schedule,
+        staffing_requirements: forecastResult.staffing_requirements,
+        compliance: complianceResult.compliance,
+        alerts: [],
+      };
+      
+      localStorage.setItem('scheduleResult', JSON.stringify(finalResult));
+      
+      // Step 6: Complete
+      setSteps((prev) => prev.map((s, i) => 
+        i === 5 ? { ...s, status: 'complete' as const } : s
+      ));
+      setProgress(100);
+      setIsComplete(true);
+      
+      // Navigate after short delay
+      setTimeout(() => navigate('/dashboard'), 500);
     };
 
     runGeneration();
   }, [navigate]);
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-6" style={{ backgroundColor: '#0A0F1E' }}>
-      <div style={{ width: '480px' }}>
+    <div className="min-h-screen flex flex-col items-center justify-center px-6" style={{ backgroundColor: '#050d1a', position: 'relative' }}>
+      <LiquidGradientBg />
+      <div style={{ width: '480px', position: 'relative', zIndex: 2 }}>
         {/* Logo */}
         <div className="mb-16">
           <h1 
@@ -81,7 +116,7 @@ export default function Processing() {
               color: '#00D4FF'
             }}
           >
-            NurseAI
+            NurseFlow
           </h1>
         </div>
 

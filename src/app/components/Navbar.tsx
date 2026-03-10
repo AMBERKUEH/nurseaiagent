@@ -23,7 +23,7 @@ export function Navbar({ filename = 'march_roster_v2.pdf', onFileRemove }: Navba
           color: '#00D4FF'
         }}
       >
-        NurseAI
+        NurseFlow
       </h1>
 
       {/* Breadcrumb */}

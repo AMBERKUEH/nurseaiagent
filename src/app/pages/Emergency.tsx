@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { Navbar } from '../components/Navbar';
 import { StaffList } from '../components/StaffList';
@@ -7,32 +7,31 @@ import { FatigueIndex } from '../components/FatigueIndex';
 import { ComplianceBar } from '../components/ComplianceBar';
 import { NurseModal } from '../components/NurseModal';
 import { AgentActivity } from '../components/AgentActivity';
+import { LiquidGradientBg } from '../components/LiquidGradientBg';
 import { nurses, emergencyMessages, Nurse } from '../data/mockData';
-import { ArrowLeft, RotateCcw } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 
 export default function Emergency() {
   const navigate = useNavigate();
   const [selectedNurse, setSelectedNurse] = useState<Nurse | null>(null);
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  // Live clock update every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: '#0A0F1E' }}>
-      <Navbar onFileRemove={() => navigate('/')} />
+    <div className="min-h-screen" style={{ backgroundColor: '#050d1a', position: 'relative' }}>
+      <LiquidGradientBg />
+      <div style={{ position: 'relative', zIndex: 2 }}>
+        <Navbar onFileRemove={() => navigate('/')} />
 
-      {/* Navigation Helper */}
-      <div className="px-6 pt-4 flex gap-3">
-        <button
-          onClick={() => navigate('/chat')}
-          className="flex items-center gap-2 px-4 py-2 rounded transition-opacity hover:opacity-80"
-          style={{
-            backgroundColor: '#111827',
-            color: '#00D4FF',
-            fontSize: '13px',
-            border: '1px solid #00D4FF',
-          }}
-        >
-          <ArrowLeft size={16} />
-          <span>Back to Chat View</span>
-        </button>
+      {/* Navigation Helper with Date/Time */}
+      <div className="px-6 pt-4 flex justify-between items-start">
         <button
           onClick={() => navigate('/dashboard')}
           className="flex items-center gap-2 px-4 py-2 rounded transition-opacity hover:opacity-80"
@@ -43,9 +42,32 @@ export default function Emergency() {
             border: '1px solid #00E5A0',
           }}
         >
-          <RotateCcw size={16} />
-          <span>Reset to Normal</span>
+          <ArrowLeft size={16} />
+          <span>Back to Dashboard</span>
         </button>
+
+        {/* Live Date/Time */}
+        <div style={{
+          textAlign: 'right',
+          fontFamily: 'Syne, sans-serif',
+        }}>
+          <div style={{
+            fontSize: '12px',
+            color: 'rgba(255,255,255,0.5)',
+            letterSpacing: '0.5px',
+          }}>
+            {currentTime.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })} ({currentTime.toLocaleDateString('en-US', { weekday: 'long' })})
+          </div>
+          <div style={{
+            fontSize: '22px',
+            fontWeight: 700,
+            color: '#FF3D5A',
+            fontVariantNumeric: 'tabular-nums',
+            letterSpacing: '1px',
+          }}>
+            {currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+          </div>
+        </div>
       </div>
 
       <div className="p-6">
@@ -84,6 +106,7 @@ export default function Emergency() {
       {selectedNurse && (
         <NurseModal nurse={selectedNurse} onClose={() => setSelectedNurse(null)} />
       )}
+      </div>
     </div>
   );
 }

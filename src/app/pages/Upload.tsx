@@ -1,7 +1,8 @@
 import { Upload, FileText, Brain, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
 import { useNavigate } from 'react-router';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, DragEvent, ChangeEvent } from 'react';
 import { uploadPDF, generateSchedule, fetchNurses, healthCheck } from '../services/api';
+import { LiquidGradientBg } from '../components/LiquidGradientBg';
 
 // Badge states
 interface BadgeState {
@@ -34,7 +35,6 @@ export default function UploadPage() {
       const health = await healthCheck();
       if (health && health.status === 'ok') {
         setBackendStatus('connected');
-        // Fetch nurses from API
         const nursesData = await fetchNurses();
         if (nursesData && nursesData.nurses) {
           setApiNurses(nursesData.nurses);
@@ -52,13 +52,10 @@ export default function UploadPage() {
       setError('Please upload a PDF file only');
       return;
     }
-    
     setFile(selectedFile);
     setError(null);
     setSuccess(null);
     setExtractedNurses(null);
-    
-    // Auto-start OCR extraction
     await extractPDF(selectedFile);
   };
 
@@ -66,9 +63,7 @@ export default function UploadPage() {
     setIsUploading(true);
     setSuccess('Extracting data from PDF...');
     setBadgeStates(prev => ({ ...prev, ocr: 'loading' }));
-    
     const result = await uploadPDF(pdfFile);
-    
     if (result && result.nurses) {
       setExtractedNurses(result.nurses);
       setSuccess(`✅ PDF extracted successfully — ${result.nurses_found} nurses found`);
@@ -78,36 +73,25 @@ export default function UploadPage() {
       setSuccess(null);
       setBadgeStates(prev => ({ ...prev, ocr: 'error' }));
     }
-    
     setIsUploading(false);
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
-    
     const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile) {
-      handleFileSelect(droppedFile);
-    }
+    if (droppedFile) handleFileSelect(droppedFile);
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      handleFileSelect(selectedFile);
-    }
+    if (selectedFile) handleFileSelect(selectedFile);
   };
 
   const animateBadges = async () => {
-    // OCR is already done or skipped
     setBadgeStates(prev => ({ ...prev, scheduling: 'loading' }));
-    
-    // Scheduling badge (2 seconds)
     await new Promise(r => setTimeout(r, 2000));
     setBadgeStates(prev => ({ ...prev, scheduling: 'done', compliance: 'loading' }));
-    
-    // Compliance badge (1 second)
     await new Promise(r => setTimeout(r, 1000));
     setBadgeStates(prev => ({ ...prev, compliance: 'done' }));
   };
@@ -117,36 +101,14 @@ export default function UploadPage() {
       setError('Backend not connected — cannot generate schedule');
       return;
     }
-
-    setIsGenerating(true);
-    setError(null);
-    
-    // Start badge animation
-    await animateBadges();
-    
-    // Use extracted nurses from OCR, or nurses from API
     const nursesToUse = extractedNurses || apiNurses;
-    
     if (!nursesToUse || nursesToUse.length === 0) {
       setError('No nurse data available — upload a PDF or wait for API to load');
-      setIsGenerating(false);
       return;
     }
-    
-    // Call generate schedule API
-    const result = await generateSchedule(nursesToUse);
-    
-    if (result) {
-      // Store result in localStorage for dashboard
-      localStorage.setItem('scheduleResult', JSON.stringify(result));
-      localStorage.setItem('nurses', JSON.stringify(nursesToUse));
-      
-      // Navigate to dashboard
-      navigate('/dashboard');
-    } else {
-      setError('Schedule generation failed — check agent status in backend');
-      setIsGenerating(false);
-    }
+    // Store nurses and navigate to Processing page for animation
+    localStorage.setItem('nurses', JSON.stringify(nursesToUse));
+    navigate('/processing');
   };
 
   const handleDemoClick = async () => {
@@ -154,115 +116,114 @@ export default function UploadPage() {
       setError('Backend not connected — cannot run demo');
       return;
     }
-
-    // Use nurses from API (fetched on mount)
     if (apiNurses && apiNurses.length > 0) {
       setExtractedNurses(apiNurses);
       setSuccess(`✅ Demo data loaded — ${apiNurses.length} nurses from API`);
-      
-      // Wait 0.5 seconds then trigger generate
-      setTimeout(async () => {
-        await handleGenerate();
-      }, 500);
+      setTimeout(async () => { await handleGenerate(); }, 500);
     } else {
       setError('No nurse data available from API — cannot run demo');
     }
   };
 
   const getBadgeStyle = (state: 'idle' | 'loading' | 'done' | 'error') => {
-    if (state === 'done') {
-      return { backgroundColor: '#1A3A2F', border: '1px solid #00E5A0' };
-    }
-    if (state === 'error') {
-      return { backgroundColor: '#3A1A1F', border: '1px solid #FF3D5A' };
-    }
-    return { backgroundColor: '#1A2235' };
+    if (state === 'done') return { backgroundColor: 'rgba(0, 229, 160, 0.1)', border: '1px solid rgba(0, 229, 160, 0.5)' };
+    if (state === 'error') return { backgroundColor: 'rgba(255, 61, 90, 0.1)', border: '1px solid rgba(255, 61, 90, 0.5)' };
+    return { backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' };
   };
 
   const getBadgeTextColor = (state: 'idle' | 'loading' | 'done' | 'error') => {
     if (state === 'done') return '#00E5A0';
     if (state === 'error') return '#FF3D5A';
-    return '#00D4FF';
+    return 'rgba(255,255,255,0.6)';
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-6" style={{ backgroundColor: '#0A0F1E' }}>
-      <div style={{ width: '520px' }}>
+    <div
+      className="min-h-screen flex flex-col items-center justify-center px-6 relative overflow-hidden"
+      style={{ backgroundColor: '#050d1a' }}
+    >
+      <LiquidGradientBg />
+
+      {/* Content */}
+      <div style={{ width: '520px', position: 'relative', zIndex: 2 }}>
         {/* Logo */}
         <div className="mb-16">
-          <h1 
-            className="text-2xl tracking-tight"
-            style={{ 
+          <h1
+            style={{
               fontFamily: 'Syne, sans-serif',
               fontWeight: 700,
-              color: '#00D4FF'
+              fontSize: '20px',
+              letterSpacing: '-0.3px',
+              color: '#7ecfff',
             }}
           >
-            NurseAI
+            NurseFlow
           </h1>
         </div>
 
         {/* Hero Text */}
-        <div className="mb-12">
-          <h2 
-            className="mb-4"
-            style={{ 
+        <div className="mb-10">
+          <h2
+            className="mb-3"
+            style={{
               fontFamily: 'Syne, sans-serif',
               fontWeight: 700,
-              fontSize: '36px',
-              lineHeight: '1.2',
-              color: '#FFFFFF'
+              fontSize: '38px',
+              lineHeight: '1.15',
+              color: '#ffffff',
+              letterSpacing: '-0.5px',
             }}
           >
             Smart Rostering Starts With One File
           </h2>
-          <p style={{ fontSize: '16px', color: '#6B7280' }}>
-            Upload your existing roster PDF and let our AI agents optimize your scheduling
+          <p style={{ fontSize: '15px', color: 'rgba(255,255,255,0.4)', lineHeight: 1.6, textAlign: 'center' }}>
+            Upload your existing roster PDF and let our AI agents optimise your scheduling.
           </p>
         </div>
 
         {/* Backend Status */}
-        <div 
+        <div
           className="mb-4 p-2 rounded-lg text-center"
-          style={{ 
-            backgroundColor: backendStatus === 'connected' ? 'rgba(0, 229, 160, 0.1)' : 
-                            backendStatus === 'error' ? 'rgba(255, 61, 90, 0.1)' : 'rgba(0, 212, 255, 0.1)',
-            border: `1px solid ${backendStatus === 'connected' ? '#00E5A0' : 
-                                 backendStatus === 'error' ? '#FF3D5A' : '#00D4FF'}`
+          style={{
+            backgroundColor:
+              backendStatus === 'connected' ? 'rgba(0,229,160,0.07)' :
+              backendStatus === 'error' ? 'rgba(255,61,90,0.08)' : 'rgba(100,160,255,0.07)',
+            border: `1px solid ${
+              backendStatus === 'connected' ? 'rgba(0,229,160,0.3)' :
+              backendStatus === 'error' ? 'rgba(255,61,90,0.3)' : 'rgba(100,160,255,0.2)'
+            }`,
           }}
         >
-          <p style={{ fontSize: '12px', color: backendStatus === 'connected' ? '#00E5A0' : 
-                                                   backendStatus === 'error' ? '#FF3D5A' : '#00D4FF' }}>
+          <p style={{
+            fontSize: '12px',
+            color:
+              backendStatus === 'connected' ? '#00E5A0' :
+              backendStatus === 'error' ? '#FF3D5A' : 'rgba(140,200,255,0.8)',
+          }}>
             {backendStatus === 'checking' ? '⏳ Checking backend connection...' :
              backendStatus === 'connected' ? '✅ Backend connected — all agents ready' :
              '❌ Backend disconnected — start uvicorn on port 8000'}
           </p>
         </div>
 
-        {/* Error Message */}
+        {/* Error */}
         {error && (
-          <div 
+          <div
             className="mb-4 p-3 rounded-lg flex items-center gap-2"
-            style={{ 
-              backgroundColor: 'rgba(255, 61, 90, 0.2)',
-              border: '1px solid #FF3D5A'
-            }}
+            style={{ backgroundColor: 'rgba(255,61,90,0.1)', border: '1px solid rgba(255,61,90,0.35)' }}
           >
-            <AlertCircle size={16} style={{ color: '#FF3D5A' }} />
-            <p style={{ fontSize: '14px', color: '#FF3D5A' }}>{error}</p>
+            <AlertCircle size={15} style={{ color: '#FF3D5A', flexShrink: 0 }} />
+            <p style={{ fontSize: '13px', color: '#FF3D5A' }}>{error}</p>
           </div>
         )}
 
-        {/* Success Message */}
+        {/* Success */}
         {success && (
-          <div 
+          <div
             className="mb-4 p-3 rounded-lg"
-            style={{ 
-              backgroundColor: 'rgba(0, 229, 160, 0.1)',
-              border: '1px solid #00E5A0'
-            }}
+            style={{ backgroundColor: 'rgba(0,229,160,0.07)', border: '1px solid rgba(0,229,160,0.3)' }}
           >
-            <p style={{ fontSize: '14px', color: '#00E5A0' }}>{success}</p>
+            <p style={{ fontSize: '13px', color: '#00E5A0' }}>{success}</p>
           </div>
         )}
 
@@ -277,107 +238,125 @@ export default function UploadPage() {
 
         {/* Upload Box */}
         <div
-          className="mb-8 flex flex-col items-center justify-center cursor-pointer transition-all"
+          className="mb-6 flex flex-col items-center justify-center cursor-pointer"
           style={{
-            width: '480px',
-            height: '200px',
-            backgroundColor: '#111827',
-            border: extractedNurses 
-              ? '2px solid #00E5A0'  // Solid green when extracted
-              : `2px dashed ${isDragging ? '#00D4FF' : file ? '#00E5A0' : 'rgba(0, 212, 255, 0.4)'}`,
-            borderRadius: '12px',
+            width: '520px',
+            height: '190px',
+            background: isDragging
+              ? 'rgba(40, 100, 220, 0.12)'
+              : extractedNurses
+              ? 'rgba(0, 229, 160, 0.05)'
+              : 'rgba(255,255,255,0.025)',
+            border: extractedNurses
+              ? '1.5px solid rgba(0,229,160,0.5)'
+              : `1.5px dashed ${isDragging ? 'rgba(80,160,255,0.7)' : 'rgba(80,140,255,0.25)'}`,
+            borderRadius: '14px',
+            backdropFilter: 'blur(8px)',
+            transition: 'all 0.25s ease',
           }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setIsDragging(true);
-          }}
+          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
         >
-          <Upload 
-            size={32} 
-            style={{ 
-              color: extractedNurses ? '#00E5A0' : file ? '#00E5A0' : '#00D4FF', 
-              marginBottom: '12px' 
-            }} 
+          <Upload
+            size={28}
+            style={{
+              color: extractedNurses ? '#00E5A0' : 'rgba(120,180,255,0.7)',
+              marginBottom: '10px',
+            }}
           />
-          <p style={{ fontSize: '16px', color: '#FFFFFF', marginBottom: '4px' }}>
+          <p style={{ fontSize: '15px', color: 'rgba(255,255,255,0.85)', marginBottom: '4px' }}>
             {file ? file.name : 'Drop your PDF here'}
           </p>
-          <p style={{ fontSize: '13px', color: '#6B7280' }}>
+          <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)' }}>
             {file ? 'Click to change file' : 'Supports scanned & digital PDFs'}
           </p>
         </div>
 
         {/* Feature Pills */}
-        <div className="flex gap-3 mb-8">
-          <div 
-            className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
-            style={getBadgeStyle(badgeStates.ocr)}
-          >
-            {badgeStates.ocr === 'loading' ? (
-              <Loader2 size={14} className="animate-spin" style={{ color: '#00D4FF' }} />
-            ) : badgeStates.ocr === 'error' ? (
-              <AlertCircle size={14} style={{ color: '#FF3D5A' }} />
-            ) : (
-              <FileText size={14} style={{ color: getBadgeTextColor(badgeStates.ocr) }} />
-            )}
-            <span style={{ fontSize: '13px', color: getBadgeTextColor(badgeStates.ocr) }}>
-              {badgeStates.ocr === 'done' ? '✅ OCR Extraction' : 
-               badgeStates.ocr === 'error' ? '❌ OCR Failed' : '📄 OCR Extraction'}
-            </span>
-          </div>
-          <div 
-            className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
-            style={getBadgeStyle(badgeStates.scheduling)}
-          >
-            {badgeStates.scheduling === 'loading' ? (
-              <Loader2 size={14} className="animate-spin" style={{ color: '#00D4FF' }} />
-            ) : (
-              <Brain size={14} style={{ color: getBadgeTextColor(badgeStates.scheduling) }} />
-            )}
-            <span style={{ fontSize: '13px', color: getBadgeTextColor(badgeStates.scheduling) }}>
-              {badgeStates.scheduling === 'done' ? '✅ AI Scheduling' : '🤖 AI Scheduling'}
-            </span>
-          </div>
-          <div 
-            className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
-            style={getBadgeStyle(badgeStates.compliance)}
-          >
-            {badgeStates.compliance === 'loading' ? (
-              <Loader2 size={14} className="animate-spin" style={{ color: '#00D4FF' }} />
-            ) : (
-              <CheckCircle size={14} style={{ color: getBadgeTextColor(badgeStates.compliance) }} />
-            )}
-            <span style={{ fontSize: '13px', color: getBadgeTextColor(badgeStates.compliance) }}>
-              {badgeStates.compliance === 'done' ? '✅ Compliance Check' : '✅ Compliance Check'}
-            </span>
-          </div>
+        <div className="flex gap-2 mb-6">
+          {[
+            {
+              key: 'ocr' as const,
+              icon: badgeStates.ocr === 'loading'
+                ? <Loader2 size={13} className="animate-spin" />
+                : badgeStates.ocr === 'error'
+                ? <AlertCircle size={13} />
+                : <FileText size={13} />,
+              label: badgeStates.ocr === 'done' ? '✅ OCR Extraction' :
+                     badgeStates.ocr === 'error' ? '❌ OCR Failed' : '📄 OCR Extraction',
+            },
+            {
+              key: 'scheduling' as const,
+              icon: badgeStates.scheduling === 'loading'
+                ? <Loader2 size={13} className="animate-spin" />
+                : <Brain size={13} />,
+              label: badgeStates.scheduling === 'done' ? '✅ AI Scheduling' : '🤖 AI Scheduling',
+            },
+            {
+              key: 'compliance' as const,
+              icon: badgeStates.compliance === 'loading'
+                ? <Loader2 size={13} className="animate-spin" />
+                : <CheckCircle size={13} />,
+              label: badgeStates.compliance === 'done' ? '✅ Compliance Check' : '✅ Compliance Check',
+            },
+          ].map(({ key, icon, label }) => (
+            <div
+              key={key}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg"
+              style={{
+                ...getBadgeStyle(badgeStates[key]),
+                transition: 'all 0.3s ease',
+              }}
+            >
+              <span style={{ color: getBadgeTextColor(badgeStates[key]) }}>{icon}</span>
+              <span style={{ fontSize: '12px', color: getBadgeTextColor(badgeStates[key]) }}>{label}</span>
+            </div>
+          ))}
         </div>
 
         {/* Generate Button */}
         <button
           onClick={handleGenerate}
           disabled={isGenerating || backendStatus !== 'connected'}
-          className="w-full transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="flex items-center justify-center gap-2"
           style={{
-            width: '480px',
+            width: '520px',
             height: '48px',
-            backgroundColor: '#00D4FF',
-            color: '#0A0F1E',
+            background: isGenerating || backendStatus !== 'connected'
+              ? 'rgba(60, 130, 220, 0.3)'
+              : 'linear-gradient(135deg, #1a6fd4 0%, #0fa3e0 100%)',
+            color: '#ffffff',
             fontFamily: 'Syne, sans-serif',
             fontWeight: 700,
-            fontSize: '14px',
-            letterSpacing: '1px',
-            borderRadius: '8px',
-            border: 'none',
+            fontSize: '13px',
+            letterSpacing: '1.5px',
+            borderRadius: '10px',
+            border: isGenerating || backendStatus !== 'connected'
+              ? '1px solid rgba(80,150,255,0.2)'
+              : '1px solid rgba(120,200,255,0.25)',
             cursor: isGenerating || backendStatus !== 'connected' ? 'not-allowed' : 'pointer',
+            opacity: isGenerating || backendStatus !== 'connected' ? 0.5 : 1,
+            transition: 'all 0.2s ease',
+            boxShadow: isGenerating || backendStatus !== 'connected'
+              ? 'none'
+              : '0 0 24px rgba(20, 120, 220, 0.35)',
+          }}
+          onMouseEnter={e => {
+            if (!isGenerating && backendStatus === 'connected') {
+              (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 36px rgba(20, 140, 255, 0.55)';
+              (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-1px)';
+            }
+          }}
+          onMouseLeave={e => {
+            (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 24px rgba(20, 120, 220, 0.35)';
+            (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(0)';
           }}
         >
           {isGenerating ? (
             <>
-              <Loader2 size={18} className="animate-spin" />
+              <Loader2 size={16} className="animate-spin" />
               Generating...
             </>
           ) : (
@@ -385,25 +364,8 @@ export default function UploadPage() {
           )}
         </button>
 
-        {/* Demo Hint Bar */}
-        <div 
-          className="mt-4 p-3 rounded-lg text-center cursor-pointer transition-all hover:opacity-80"
-          style={{ 
-            backgroundColor: 'rgba(0, 212, 255, 0.1)',
-            border: '1px solid rgba(0, 212, 255, 0.3)'
-          }}
-          onClick={handleDemoClick}
-        >
-          <p style={{ fontSize: '12px', color: '#00D4FF' }}>
-            💡 This is a demo — click anywhere to see the AI in action
-          </p>
-        </div>
-
-        {/* Footer Text */}
-        <p 
-          className="text-center mt-8"
-          style={{ fontSize: '12px', color: '#6B7280' }}
-        >
+        {/* Footer */}
+        <p className="text-center mt-6" style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)', letterSpacing: '0.3px' }}>
           Your data never leaves the hospital system
         </p>
       </div>

@@ -378,6 +378,126 @@ def generate_schedule(request: GenerateScheduleRequest):
     return result
 
 
+# POST /api/agent/forecast - Step 1: Get staffing requirements
+@app.post("/api/agent/forecast")
+def agent_forecast(request: GenerateScheduleRequest):
+    """Step 1: ForecastAgent predicts staffing requirements."""
+    print("\n📊 [API] POST /api/agent/forecast called")
+    
+    if not forecast_agent:
+        raise HTTPException(status_code=503, detail="Forecast Agent not available")
+    
+    try:
+        print("  → Getting historical data...")
+        historical_data = forecast_agent.get_historical_data()
+        print(f"  ✓ Got {len(historical_data)} days of historical data")
+        
+        print("  → Predicting staffing requirements...")
+        staffing_requirements = forecast_agent.predict(historical_data)
+        print(f"  ✓ Staffing requirements: {staffing_requirements}")
+        
+        return {
+            "step": "forecast",
+            "status": "complete",
+            "staffing_requirements": staffing_requirements
+        }
+    except Exception as e:
+        print(f"  ✗ ForecastAgent failed: {e}")
+        raise HTTPException(status_code=503, detail=f"Forecast Agent failed — {str(e)}")
+
+
+# POST /api/agent/schedule - Step 2: Generate schedule
+class ScheduleRequest(BaseModel):
+    nurses: List[Dict[str, Any]]
+    staffing_requirements: Dict[str, int]
+    rules: Optional[Dict[str, Any]] = None
+
+@app.post("/api/agent/schedule")
+def agent_schedule(request: ScheduleRequest):
+    """Step 2: SchedulingAgent generates the schedule."""
+    print("\n🗓️  [API] POST /api/agent/schedule called")
+    
+    if not scheduling_agent:
+        raise HTTPException(status_code=503, detail="Scheduling Agent not available")
+    
+    nurses = request.nurses
+    if not nurses:
+        raise HTTPException(status_code=400, detail="No nurses provided")
+    
+    rules = request.rules or {
+        "max_shifts_per_week": 5,
+        "min_rest_hours": 12,
+        "ward_skill_requirements": {
+            "ICU": "N3",
+            "ER": "N3",
+            "General": "N2",
+            "Pediatrics": "N2"
+        }
+    }
+    
+    try:
+        print(f"  → Generating schedule for {len(nurses)} nurses...")
+        schedule = scheduling_agent.generate(nurses, rules, request.staffing_requirements)
+        print(f"  ✓ Schedule generated for {len(schedule)} days")
+        
+        return {
+            "step": "schedule",
+            "status": "complete",
+            "schedule": schedule
+        }
+    except Exception as e:
+        print(f"  ✗ SchedulingAgent failed: {e}")
+        raise HTTPException(status_code=503, detail=f"Scheduling Agent failed — {str(e)}")
+
+
+# POST /api/agent/compliance - Step 3: Check compliance
+class ComplianceRequest(BaseModel):
+    schedule: Dict[str, Dict[str, List[str]]]
+    nurses: List[Dict[str, Any]]
+
+@app.post("/api/agent/compliance")
+def agent_compliance(request: ComplianceRequest):
+    """Step 3: ComplianceAgent checks the schedule."""
+    print("\n⚖️  [API] POST /api/agent/compliance called")
+    
+    if not compliance_agent:
+        return {
+            "step": "compliance",
+            "status": "complete",
+            "compliance": {
+                "status": "UNKNOWN",
+                "reasons": ["Compliance Agent not available"],
+                "score": 0
+            }
+        }
+    
+    try:
+        print("  → Checking compliance...")
+        compliance_result = compliance_agent.check(request.schedule, request.nurses)
+        print(f"  ✓ Compliance: {'PASSED' if compliance_result.get('passed') else 'FAILED'}")
+        
+        return {
+            "step": "compliance",
+            "status": "complete",
+            "compliance": {
+                "status": "PASSED" if compliance_result.get("passed") else "FAILED",
+                "reasons": compliance_result.get("violations", []),
+                "score": compliance_result.get("compliance_score", 0)
+            }
+        }
+    except Exception as e:
+        print(f"  ✗ ComplianceAgent failed: {e}")
+        return {
+            "step": "compliance",
+            "status": "error",
+            "compliance": {
+                "status": "UNKNOWN",
+                "reasons": [f"Compliance check failed: {str(e)}"],
+                "score": 0
+            }
+        }
+
+
 # POST /api/emergency - Handle emergency disruption
 @app.post("/api/emergency")
 def handle_emergency(request: EmergencyRequest):

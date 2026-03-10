@@ -11,6 +11,7 @@ build/
 .venv
 venv/
 
+<<<<<<< Updated upstream
 # Model weights (too large for git)
 *.pt
 *.pth
@@ -24,6 +25,14 @@ surgeye/backend/Surgical-Instruments-1/
 # Node
 node_modules/
 .next/
+=======
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.qoder
+>>>>>>> Stashed changes
 
 # OS
 .DS_Store
