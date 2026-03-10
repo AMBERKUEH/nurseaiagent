@@ -1,13 +1,12 @@
 import { useState, useEffect } from 'react';
 import { MainNavbar } from '../components/MainNavbar';
-import { StaffList } from '../components/StaffList';
+import { StaffPanel } from '../components/StaffPanel';
 import { WeeklySchedule } from '../components/WeeklySchedule';
-import { FatigueIndex } from '../components/FatigueIndex';
 import { ComplianceBar } from '../components/ComplianceBar';
 import { NurseModal } from '../components/NurseModal';
 import { AgentActivity } from '../components/AgentActivity';
 import { LiquidGradientBg } from '../components/LiquidGradientBg';
-import { AlertTriangle, Loader2, AlertCircle, Users, Calendar, Activity } from 'lucide-react';
+import { Loader2, AlertCircle, Users, Calendar, Activity } from 'lucide-react';
 import { AgentMessage, Nurse } from '../data/mockData';
 
 interface ScheduleData {
@@ -136,37 +135,43 @@ export default function SchedulePage() {
             </div>
           </div>
 
-          {/* Main Grid */}
-          <div className="grid grid-cols-12 gap-6">
-            {/* Left Column - Staff List */}
-            <div className="col-span-3">
-              <StaffList nurses={nurses} onNurseClick={setSelectedNurse} />
-            </div>
-
-            {/* Center Column - Schedule */}
-            <div className="col-span-6">
+          {/* Main Grid - WeeklySchedule left, StaffPanel right */}
+          <div className="grid grid-cols-12 gap-6 mb-6">
+            {/* WeeklySchedule - on the left (col-span-9) */}
+            <div className="col-span-9">
               <WeeklySchedule 
                 schedule={schedule} 
                 nurses={nurses}
+                staffingRequirements={scheduleData?.forecast}
               />
-              
-              {/* Compliance Bar */}
-              {scheduleData?.compliance && (
-                <div className="mt-4">
-                  <ComplianceBar 
-                    isCompliant={scheduleData.compliance.passed}
-                    message={scheduleData.compliance.passed ? 'Schedule Compliant' : scheduleData.compliance.violations[0] || 'Compliance Issues'}
-                  />
-                </div>
-              )}
             </div>
-
-            {/* Right Column - Fatigue & Activity */}
-            <div className="col-span-3 space-y-4">
-              <FatigueIndex nurses={nurses} />
-              <AgentActivity messages={activityLog} />
+            {/* StaffPanel - combines StaffList and FatigueIndex on the right */}
+            <div className="col-span-3">
+              <StaffPanel
+                nurses={nurses}
+                schedule={schedule}
+                onNurseClick={setSelectedNurse}
+              />
             </div>
           </div>
+
+          {/* Agent Activity Panel - Below Weekly Schedule */}
+          <div style={{ marginBottom: '24px' }}>
+            <AgentActivity 
+              messages={activityLog}
+              schedule={schedule}
+            />
+          </div>
+
+          {/* Compliance Bar */}
+          {scheduleData?.compliance && (
+            <div className="mt-4">
+              <ComplianceBar 
+                isCompliant={scheduleData.compliance.passed}
+                message={scheduleData.compliance.passed ? 'Schedule Compliant' : scheduleData.compliance.violations[0] || 'Compliance Issues'}
+              />
+            </div>
+          )}
         </div>
       </div>
 
