@@ -93,6 +93,139 @@ async def start_session(nurse_id: str = "nurse-001", nurse_name: str = "Sarah Ch
     }
 
 
+# ============ DEMO ENDPOINTS (For Presentation) ============
+
+@app.post("/api/demo/baseline")
+async def demo_set_baseline():
+    """
+    DEMO: Set fake baseline data without camera (for presentation).
+    """
+    global active_session
+    from datetime import datetime
+    
+    if not active_session:
+        return {"status": "error", "message": "No active session - start session first"}
+    
+    # Fake baseline data
+    fake_baseline = {
+        "Forceps": 2,
+        "Hemostat": 1,
+        "Scalpel": 1,
+        "Army_navy": 3,
+        "Towel_clip": 2
+    }
+    
+    tracker.set_baseline(fake_baseline)
+    tracker.baseline_timestamp = datetime.now().isoformat()
+    
+    # Save to database
+    save_baseline_to_session(active_session["session_id"], fake_baseline, None)
+    
+    return {
+        "status": "baseline locked",
+        "baseline": fake_baseline,
+        "screenshot": None,
+        "session_id": active_session["session_id"],
+        "timestamp": tracker.baseline_timestamp,
+        "note": "DEMO MODE - Fake data for presentation"
+    }
+
+
+@app.post("/api/demo/postop")
+async def demo_postop_check(passed: bool = True):
+    """
+    DEMO: Set fake post-op result without camera (for presentation).
+    """
+    global active_session
+    from datetime import datetime
+    
+    if not active_session:
+        return {"status": "error", "message": "No active session"}
+    
+    if not tracker.is_baseline_set():
+        return {"status": "error", "message": "Please set baseline first"}
+    
+    if passed:
+        # All instruments accounted for
+        final_counts = tracker.baseline.copy()
+        missing = {}
+        extra = {}
+        summary = "All instruments accounted for"
+    else:
+        # Missing Hemostat
+        final_counts = tracker.baseline.copy()
+        final_counts["Hemostat"] = 0
+        missing = {"Hemostat": 1}
+        extra = {}
+        summary = "MISSING: 1x Hemostat"
+    
+    result = {
+        "passed": passed,
+        "baseline": tracker.baseline.copy(),
+        "final": final_counts,
+        "missing": missing,
+        "extra": extra,
+        "summary": summary,
+        "postop_image": None,
+        "session_id": active_session["session_id"],
+        "note": "DEMO MODE - Fake data for presentation"
+    }
+    
+    investigation_id = None
+    
+    # If failed, trigger investigation
+    if not passed:
+        evidence = {
+            "baseline_image": tracker.baseline_image,
+            "postop_image": None,
+            "timeline": []
+        }
+        
+        rostering_result = await trigger_rostering_alert(
+            missing_items=missing,
+            nurse_id=active_session["nurse_id"],
+            nurse_name=active_session["nurse_name"],
+            session_id=active_session["session_id"],
+            evidence=evidence
+        )
+        
+        result["investigation"] = rostering_result
+        investigation_id = rostering_result.get("investigation_id")
+    
+    # Save to database
+    save_postop_to_session(
+        active_session["session_id"], 
+        final_counts, 
+        None, 
+        investigation_id
+    )
+    
+    return result
+
+
+@app.get("/api/demo/sessions")
+async def get_demo_sessions():
+    """
+    Get all surgery sessions (including demo ones).
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM surgery_sessions ORDER BY started_at DESC')
+    rows = cursor.fetchall()
+    conn.close()
+    
+    sessions = []
+    for row in rows:
+        session = dict(row)
+        if session.get('baseline_counts'):
+            session['baseline_counts'] = json.loads(session['baseline_counts'])
+        if session.get('final_counts'):
+            session['final_counts'] = json.loads(session['final_counts'])
+        sessions.append(session)
+    
+    return {"sessions": sessions}
+
+
 @app.post("/api/session/end")
 async def end_session():
     """

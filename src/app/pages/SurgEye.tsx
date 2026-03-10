@@ -196,6 +196,73 @@ export default function SurgEyePage() {
     }
   }, [session?.active]);
 
+  // DEMO: Fake baseline for presentation
+  const demoSetBaseline = useCallback(async () => {
+    if (!session) {
+      alert('Please start a session first');
+      return;
+    }
+    
+    try {
+      const response = await fetch('http://localhost:8005/api/demo/baseline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await response.json();
+      
+      if (data.status === 'baseline locked') {
+        setBaseline({
+          baseline: data.baseline,
+          screenshot: '',
+          timestamp: data.timestamp
+        });
+      }
+    } catch (error) {
+      console.error('Error setting demo baseline:', error);
+    }
+  }, [session]);
+
+  // DEMO: Fake post-op PASS for presentation
+  const demoPostopPass = useCallback(async () => {
+    if (!session) {
+      alert('No active session');
+      return;
+    }
+    
+    try {
+      const response = await fetch('http://localhost:8005/api/demo/postop?passed=true', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await response.json();
+      setPostopResult(data);
+    } catch (error) {
+      console.error('Error performing demo post-op:', error);
+    }
+  }, [session]);
+
+  // DEMO: Fake post-op FAIL for presentation
+  const demoPostopFail = useCallback(async () => {
+    if (!session) {
+      alert('No active session');
+      return;
+    }
+    
+    try {
+      const response = await fetch('http://localhost:8005/api/demo/postop?passed=false', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await response.json();
+      setPostopResult(data);
+      if (data.investigation) {
+        fetchInvestigations();
+      }
+    } catch (error) {
+      console.error('Error performing demo post-op:', error);
+    }
+  }, [session]);
+
   const fetchSession = async () => {
     try {
       const response = await fetch('http://localhost:8005/api/session/current');
@@ -381,6 +448,36 @@ export default function SurgEyePage() {
                 <Square size={18} />
                 End Session
               </button>
+            )}
+            {/* DEMO Buttons for Presentation */}
+            {session?.active && (
+              <>
+                <button
+                  onClick={demoSetBaseline}
+                  className="flex items-center gap-2 px-3 py-2 bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 transition-colors text-sm"
+                  title="DEMO: Fake baseline without camera"
+                >
+                  DEMO Baseline
+                </button>
+                {baseline && (
+                  <>
+                    <button
+                      onClick={demoPostopPass}
+                      className="flex items-center gap-2 px-3 py-2 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 transition-colors text-sm"
+                      title="DEMO: Fake PASS result"
+                    >
+                      DEMO Pass
+                    </button>
+                    <button
+                      onClick={demoPostopFail}
+                      className="flex items-center gap-2 px-3 py-2 bg-orange-500/20 text-orange-400 rounded-lg hover:bg-orange-500/30 transition-colors text-sm"
+                      title="DEMO: Fake FAIL result"
+                    >
+                      DEMO Fail
+                    </button>
+                  </>
+                )}
+              </>
             )}
           </div>
         </div>
