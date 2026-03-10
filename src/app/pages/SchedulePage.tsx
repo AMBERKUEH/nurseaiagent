@@ -93,7 +93,9 @@ export default function SchedulePage() {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-900 flex flex-col">
-        <MainNavbar />
+        <div className="relative z-50">
+          <MainNavbar />
+        </div>
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
@@ -106,7 +108,9 @@ export default function SchedulePage() {
 
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col">
-      <MainNavbar />
+      <div className="relative z-50">
+        <MainNavbar />
+      </div>
       
       <div className="flex-1 relative overflow-hidden">
         <LiquidGradientBg />
