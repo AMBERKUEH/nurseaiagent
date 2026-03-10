@@ -25,9 +25,16 @@ export function AgentActivity({
 }: AgentActivityProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [inputValue, setInputValue] = useState('');
-  const [messages, setMessages] = useState<AgentMessage[]>(initialMessages);
+  // Ensure unique IDs for initial messages
+  const [messages, setMessages] = useState<AgentMessage[]>(() => 
+    initialMessages.map((msg, idx) => ({
+      ...msg,
+      id: msg.id || `${Date.now()}-${idx}`,
+    }))
+  );
   const [isLoading, setIsLoading] = useState(false);
   const [isEmergency, setIsEmergency] = useState(false);
+  const [messageIdCounter, setMessageIdCounter] = useState(initialMessages.length);
 
   const handleSubmit = async () => {
     if (!inputValue.trim()) return;
@@ -45,8 +52,10 @@ export function AgentActivity({
 
     if (result) {
       // Add emergency message to activity log
+      const newId = `${Date.now()}-${messageIdCounter}`;
+      setMessageIdCounter(prev => prev + 1);
       const emergencyMessage: AgentMessage = {
-        id: Date.now().toString(),
+        id: newId,
         type: 'EMERGENCY',
         message: result.action_taken || 'Emergency processed',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -71,8 +80,10 @@ export function AgentActivity({
       }
     } else {
       // Add error message
+      const newId = `${Date.now()}-${messageIdCounter}`;
+      setMessageIdCounter(prev => prev + 1);
       const errorMessage: AgentMessage = {
-        id: Date.now().toString(),
+        id: newId,
         type: 'EMERGENCY',
         message: 'Failed to process emergency. Please try again.',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),

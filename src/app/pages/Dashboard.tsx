@@ -7,7 +7,7 @@ import { ComplianceBar } from '../components/ComplianceBar';
 import { NurseModal } from '../components/NurseModal';
 import { AgentActivity } from '../components/AgentActivity';
 import { LiquidGradientBg } from '../components/LiquidGradientBg';
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { AgentMessage } from '../data/mockData';
 
 interface Nurse {
@@ -230,17 +230,6 @@ export default function Dashboard() {
         <Navbar onFileRemove={() => navigate('/')} />
 
         <div className="px-6 pt-4 flex justify-between items-start">
-          <div className="flex gap-3">
-            <button
-              onClick={() => navigate('/emergency')}
-              className="flex items-center gap-2 px-4 py-2 rounded transition-opacity hover:opacity-80"
-              style={{ backgroundColor: 'rgba(255,61,90,0.08)', color: '#FF3D5A', fontSize: '13px', border: '1px solid rgba(255,61,90,0.3)' }}
-            >
-              <AlertTriangle size={16} />
-              <span>Simulate Emergency</span>
-            </button>
-          </div>
-
           {/* Live Date/Time */}
           <div style={{
             textAlign: 'right',

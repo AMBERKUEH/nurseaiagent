@@ -151,7 +151,7 @@ If information is missing, use null. Return ONLY the JSON, no explanation."""
 
         # Build assigned nurses lookup
         assigned_nurses = {
-            (entry["day"], entry["shift"].lower(), entry["ward"].lower()): entry["nurse"] 
+            (entry.get("day"), entry.get("shift", "").lower(), entry.get("ward", "").lower()): entry.get("nurse") 
             for entry in current_schedule
         }
         
@@ -167,18 +167,21 @@ If information is missing, use null. Return ONLY the JSON, no explanation."""
                 if nurse_skill_rank.get(n_skill, 0) < nurse_skill_rank[required_skill]:
                     continue
             
-            if (day, shift.lower(), ward.lower()) in assigned_nurses and \
-               assigned_nurses[(day, shift.lower(), ward.lower())] == n_name:
+            shift_key = shift.lower() if shift else ""
+            ward_key = ward.lower() if ward else ""
+            if (day, shift_key, ward_key) in assigned_nurses and \
+               assigned_nurses[(day, shift_key, ward_key)] == n_name:
                 continue
             
             replacement = nurse
             break
 
         # Build updated schedule
+        shift_lower = shift.lower() if shift else ""
         updated_schedule = [entry for entry in current_schedule 
                           if not (entry.get("nurse") == affected_nurse and 
                                  entry.get("day") == day and 
-                                 entry.get("shift", "").lower() == shift.lower())]
+                                 entry.get("shift", "").lower() == shift_lower)]
         
         if replacement:
             new_assignment = {
@@ -206,6 +209,27 @@ If information is missing, use null. Return ONLY the JSON, no explanation."""
         affected_ward = res.get("affected_ward")
 
         print(f"[EmergencyAgent] Parsed: nurse={affected_nurse}, day={affected_day}, shift={affected_shift}, ward={affected_ward}")
+
+        # If no specific day/shift provided, find all scheduled shifts for this nurse
+        if affected_nurse and (not affected_day or not affected_shift):
+            nurse_shifts = [
+                entry for entry in current_schedule 
+                if entry.get("nurse") == affected_nurse
+            ]
+            if nurse_shifts:
+                # Use the first scheduled shift found
+                first_shift = nurse_shifts[0]
+                affected_day = affected_day or first_shift.get("day")
+                affected_shift = affected_shift or first_shift.get("shift")
+                affected_ward = affected_ward or first_shift.get("ward")
+                print(f"[EmergencyAgent] Found scheduled shift: day={affected_day}, shift={affected_shift}, ward={affected_ward}")
+            else:
+                return {
+                    "updated_schedule": current_schedule,
+                    "action_taken": f"Could not find any scheduled shifts for {affected_nurse}.",
+                    "severity": "LOW",
+                    "parsed_info": res
+                }
 
         # Determine severity
         severity = self._get_severity(affected_ward)
